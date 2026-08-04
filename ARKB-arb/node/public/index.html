@@ -4,152 +4,236 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ARKB Arbitrage Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
   <style>
+    :root {
+      --bg:       #050812;
+      --panel:    #0C1528CC;
+      --strong:   #111D3BCC;
+      --nav:      #060C1CCC;
+      --hover:    #0F1E3ACC;
+      --text:     #9AB0D4;
+      --muted:    #9AB0D4;
+      --meta:     #B8C8E6;
+      --caption:  #7F94BA;
+      --footer-text: #6B7FA0;
+      --violet:   #7059FB;
+      --blue:     #5070C8;
+      --bright:   #6F86FF;
+      --border:   #7DA5FF28;
+
+      --green: #4F9A6E;
+      --yellow: #BFA054;
+      --red: #B8555F;
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; background: #0a0a0f; color: #e0e0e0; }
+    body {
+      background-image:
+        linear-gradient(#5F7FB51A 1px, transparent 1px),
+        linear-gradient(90deg, #5F7FB51A 1px, transparent 1px),
+        linear-gradient(90deg, #1A3D8F 0%, #050812 50%, #0E5669 100%);
+      background-color: var(--bg);
+      background-size: 40px 40px, 40px 40px, 100% 100%;
+      background-attachment: fixed;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: var(--text);
+      font-size: 13px;
+    }
 
     .header {
-      background: linear-gradient(135deg, #0d1a0d, #1a2a0a);
-      padding: 20px 30px;
-      border-bottom: 1px solid #1f3a0f;
+      background: var(--nav);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      padding: 0px 24px;
+      border-bottom: 1px solid var(--border);
       display: flex; justify-content: space-between; align-items: center;
+      position: relative;
     }
-    .header h1 { font-size: 22px; color: #f7931a; }
-    .header .subtitle { color: #666; font-size: 12px; margin-top: 4px; }
-    .header .mode { padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold; }
-    .mode-live { background: #0a2a0a; color: #4caf50; border: 1px solid #4caf50; }
-    .mode-dry  { background: #2a2a0a; color: #ff9800; border: 1px solid #ff9800; }
+    .header .logo { height: 70px; width: auto; object-fit: contain; flex-shrink: 0; }
+    .header .title-block {
+      position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+    }
+    .header h1 { font-size: 19.84px; font-weight: 700; color: var(--muted); letter-spacing: 1px; margin: 0 0 2px; }
+    .header .subtitle { color: var(--caption); font-size: 12px; margin-top: 4px; }
+    .header .status-block { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+    .header .status-row { display: flex; align-items: center; gap: 8px; }
+    .header .status-text { font-size: 11px; color: var(--caption); }
+    .header .mode { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 700; color: var(--caption); }
+    .mode-live { background: rgba(79,154,110,0.15); color: var(--green); border: 1px solid rgba(79,154,110,0.5); }
+    .mode-dry  { background: rgba(184,85,95,0.15); color: var(--red); border: 1px solid rgba(184,85,95,0.5); }
+    .refresh-btn {
+      display: flex; align-items: center; gap: 5px;
+      background: var(--strong); border: 1px solid #7059FB66; color: var(--text);
+      padding: 6px 14px; border-radius: 8px; font-size: 12.8px; font-weight: 600;
+      font-family: Arial, sans-serif; cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .refresh-btn:hover { background: linear-gradient(90deg, var(--violet), var(--blue)); border-color: #7DA5FF88; }
+    #conn-status { width: 8px; height: 8px; border-radius: 50%; background: var(--caption); display: inline-block; margin-right: 6px; }
+    #conn-status.connected { background: var(--green); box-shadow: 0 0 6px rgba(79,154,110,0.6); }
 
-    .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; padding: 20px 30px; }
-    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 0 30px 20px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; padding: 16px 24px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 24px 16px; }
+    .grid-top { grid-template-columns: 1fr 1fr 1fr 1fr; }
+    .grid-top .card { padding: 8px 12px; display: flex; flex-direction: column; justify-content: center; }
+    .grid-top .big-number { font-size: 18px; }
+    .grid-top .signal-box { padding: 12px; }
 
     .card {
-      background: #0e1a0a;
-      border: 1px solid #1f3a0f;
+      background: linear-gradient(145deg, var(--strong), var(--panel));
+      border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 20px;
+      padding: 14px 18px;
+      box-shadow: 0 16px 40px #0006;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
     }
+    .card:hover { background: var(--hover); border-color: #7DA5FF55; transform: translateY(-1px); }
     .card h3 {
-      color: #6a9a50;
+      color: var(--muted);
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 1.5px;
-      margin-bottom: 12px;
+      margin-bottom: 6px;
     }
-    .big-number { font-size: 32px; font-weight: bold; color: #fff; }
-    .sub { font-size: 13px; color: #666; margin-top: 4px; }
+    .big-number { font-size: 22px; font-weight: 700; color: var(--text); }
+    .sub { font-size: 11px; color: var(--caption); margin-top: 4px; }
 
     .signal-box { text-align: center; padding: 30px; }
-    .signal { font-size: 42px; font-weight: bold; transition: color 0.3s; }
-    .signal-neutral { color: #444; }
-    .signal-create  { color: #4caf50; text-shadow: 0 0 20px rgba(76,175,80,0.4); }
-    .signal-redeem  { color: #f44336; text-shadow: 0 0 20px rgba(244,67,54,0.4); }
+    .signal { font-size: 26px; font-weight: bold; transition: color 0.3s; }
+    .signal-neutral { color: var(--caption); }
+    .signal-create  { color: var(--green); }
+    .signal-redeem  { color: var(--red); }
 
-    .prem-positive { color: #4caf50; }
-    .prem-negative { color: #f44336; }
+    .prem-positive { color: var(--green); }
+    .prem-negative { color: var(--red); }
 
-    .chart-container { padding: 0 30px 20px; }
+    .chart-container { margin: 0 24px 16px; }
     .chart-card {
-      background: #0e1a0a;
-      border: 1px solid #1f3a0f;
+      background: linear-gradient(145deg, #13284DCC, #0C1830CC);
+      border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 20px;
+      padding: 16px;
+      box-shadow: 0 16px 40px #0006;
     }
     .chart-card h3 {
-      color: #6a9a50;
-      font-size: 11px;
+      color: var(--muted);
+      font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 1.5px;
       margin-bottom: 12px;
     }
+    #premChart { max-height: 180px; }
 
-    .trades-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .trades-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .trades-table th {
-      text-align: left; padding: 8px; color: #6a9a50;
-      border-bottom: 1px solid #1f3a0f;
-      font-size: 11px; text-transform: uppercase;
+      text-align: left; padding: 6px 8px; color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600;
     }
-    .trades-table td { padding: 8px; border-bottom: 1px solid #0a150a; }
-    .trades-table .create { color: #4caf50; }
-    .trades-table .redeem { color: #f44336; }
+    .trades-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    .trades-table tr:hover td { background: var(--hover); }
+    .trades-table .create { color: var(--green); }
+    .trades-table .redeem { color: var(--red); }
 
     .stat-row {
       display: flex; justify-content: space-between;
-      padding: 8px 0; border-bottom: 1px solid #0a1a0a;
+      padding: 4px 0; border-bottom: 1px solid var(--border);
+      font-size: 12px;
     }
-    .stat-label { color: #6a9a50; font-size: 13px; }
-    .stat-value { color: #fff; font-size: 13px; font-weight: 600; }
+    .stat-label { color: var(--muted); font-size: 12px; }
+    .stat-value { color: var(--text); font-size: 12px; font-weight: 600; }
 
     .mechanics {
-      background: #080f08;
-      border: 1px solid #1a2a1a;
+      background: var(--nav);
+      border: 1px solid var(--border);
       border-radius: 8px;
       padding: 12px 16px;
       margin-top: 12px;
       font-size: 12px;
-      color: #666;
+      color: var(--caption);
       line-height: 1.8;
     }
-    .mechanics .step { color: #4caf50; }
-    .mechanics .step-red { color: #f44336; }
+    .mechanics div { color: var(--caption); font-size: 12px; padding-left: 12px; margin: 2px 0; }
+    .mechanics .step { color: var(--green); padding-left: 0; }
+    .mechanics .step-red { color: var(--red); padding-left: 0; }
 
-    .pnl-positive { color: #4caf50 !important; }
-    .pnl-negative { color: #f44336 !important; }
+    .pnl-positive { color: var(--green) !important; }
+    .pnl-negative { color: var(--red) !important; }
 
     .footer {
-      padding: 12px 30px;
-      color: #333;
+      position: relative;
+      padding: 12px 24px;
+      color: var(--footer-text);
       font-size: 11px;
-      border-top: 1px solid #1a2a1a;
-      display: flex; justify-content: space-between;
+      border-top: 1px solid #7895D920;
+      text-align: center;
+    }
+    .footer #session-elapsed {
+      position: absolute;
+      right: 24px;
+      top: 50%;
+      transform: translateY(-50%);
     }
 
     .label {
-      color: #6a9a50;
+      color: var(--muted);
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 1.5px;
-      margin-bottom: 12px;
+      margin-bottom: 6px;
     }
 
     #market-overview table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 13px;
+      font-size: 12px;
     }
 
     #market-overview th,
     #market-overview td {
-      padding: 8px;
-      border-bottom: 1px solid #0a150a;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--border);
       text-align: left;
     }
 
     #market-overview th {
-      color: #6a9a50;
+      color: var(--muted);
       font-size: 11px;
       text-transform: uppercase;
+      letter-spacing: 1.5px;
+      font-weight: 600;
     }
   </style>
 </head>
 <body>
 
   <div class="header">
-    <div>
-      <h1>₿ ARKB Arbitrage Monitor</h1>
-      <div class="subtitle">ARK 21Shares Bitcoin ETF — Creation/Redemption Arbitrage</div>
+    <a href="https://www.openexa.com/" target="_blank" rel="noopener noreferrer">
+      <img class="logo" src="openexa_logo.webp" alt="OpenEXA">
+    </a>
+    <div class="title-block">
+      <h1>ARKB Arbitrage Monitor</h1>
+      <div class="subtitle">ARK 21Shares Bitcoin ETF — Creation/Redemption Arbitrage &nbsp;|&nbsp; <span id="conn-status"></span><span id="conn-text">Connecting...</span></div>
     </div>
-    <div style="text-align:right">
-      <span id="clock" style="color:#666;margin-right:12px;font-size:13px;"></span>
-      <span class="mode" id="mode-badge">CONNECTING</span>
+    <div class="status-block">
+      <div class="status-row">
+        <span class="mode" id="mode-badge">CONNECTING</span>
+        <button class="refresh-btn" id="refresh-btn" type="button">↻ Refresh</button>
+      </div>
+      <div class="status-text" id="clock">—</div>
     </div>
   </div>
 
   <!-- Row 1: Prices + Signal -->
-  <div class="grid">
+  <div class="grid grid-top">
     <div class="card">
       <h3>ARKB ETF Price</h3>
       <div class="big-number" id="arkb-mid">—</div>
@@ -158,7 +242,12 @@
     <div class="card">
       <h3>BTC Spot Price</h3>
       <div class="big-number" id="btc-price">—</div>
-      <div class="sub">NAV est: <span id="nav">—</span> &nbsp;|&nbsp; BTC/Share: <span id="btc-per-share">—</span> <span id="btc-per-share-source" style="font-size:10px;color:#888"></span></div>
+      <div class="sub">Coinbase real-time</div>
+    </div>
+    <div class="card">
+      <h3>NAV Estimate</h3>
+      <div class="big-number" id="nav">—</div>
+      <div class="sub">BTC/Share: <span id="btc-per-share">—</span> <span id="btc-per-share-source" style="font-size:10px;color:#888"></span></div>
     </div>
     <div class="card signal-box">
       <h3>Signal</h3>
@@ -202,7 +291,7 @@
         <thead><tr><th>Time</th><th>Signal</th><th>Spread</th><th>P&amp;L</th></tr></thead>
         <tbody id="trades-body"></tbody>
       </table>
-      <div id="no-trades" style="color:#444;text-align:center;padding:20px;font-size:13px;">
+      <div id="no-trades" style="color:var(--caption);text-align:center;padding:20px;font-size:13px;">
         No signals yet — watching for premium/discount...
       </div>
     </div>
@@ -211,16 +300,16 @@
       <h3>Arb Mechanics</h3>
       <div class="mechanics">
         <div><span class="step">🟢 CREATE</span> — ARKB trading at <strong>premium</strong></div>
-        <div style="padding-left:16px;color:#555">Buy BTC on spot</div>
-        <div style="padding-left:16px;color:#555">→ Deliver to <strong>Coinbase Custody</strong></div>
-        <div style="padding-left:16px;color:#555">→ Receive 5,000 ARKB shares from ARK/21Shares</div>
-        <div style="padding-left:16px;color:#555">→ Sell ARKB on exchange → capture premium</div>
+        <div>Buy BTC on spot</div>
+        <div>→ Deliver to <strong>Coinbase Custody</strong></div>
+        <div>→ Receive 5,000 ARKB shares from ARK/21Shares</div>
+        <div>→ Sell ARKB on exchange → capture premium</div>
         <br>
         <div><span class="step-red">🔴 REDEEM</span> — ARKB trading at <strong>discount</strong></div>
-        <div style="padding-left:16px;color:#555">Buy ARKB on exchange (below NAV)</div>
-        <div style="padding-left:16px;color:#555">→ Redeem with <strong>ARK / 21Shares</strong></div>
-        <div style="padding-left:16px;color:#555">→ Receive BTC from Coinbase Custody</div>
-        <div style="padding-left:16px;color:#555">→ Sell BTC on spot → capture discount</div>
+        <div>Buy ARKB on exchange (below NAV)</div>
+        <div>→ Redeem with <strong>ARK / 21Shares</strong></div>
+        <div>→ Receive BTC from Coinbase Custody</div>
+        <div>→ Sell BTC on spot → capture discount</div>
       </div>
 
       <h3 style="margin-top:20px;">Cost Model</h3>
@@ -238,7 +327,7 @@
   <div style="margin: 0 24px 16px;">
     <div class="card">
       <div class="label" style="margin-bottom:10px">Market Overview</div>
-      <div id="market-overview" style="color:#555;text-align:center">Loading...</div>
+      <div id="market-overview" style="color:var(--caption);text-align:left">Loading...</div>
     </div>
   </div>
 
@@ -388,7 +477,7 @@ function renderSnapshot(s) {
   }
   chart.update('none');
 
-  $('clock').textContent = new Date().toLocaleTimeString();
+  $('clock').textContent = 'Updated ' + new Date().toLocaleTimeString();
   $('session-elapsed').textContent = `Session: ${((Date.now() - state.startTime) / 60000).toFixed(1)} min`;
 }
 
@@ -431,7 +520,7 @@ async function loadMarketOverview() {
     const rows = arkbEntries.length > 0
       ? arkbEntries.map(([sym, d]) => {
         const change = d.change_pct != null
-          ? `<span style="color:${d.change_pct >= 0 ? 'green' : 'red'}">${d.change_pct > 0 ? '+' : ''}${d.change_pct}%</span>`
+          ? `<span style="color:${d.change_pct >= 0 ? '#4F9A6E' : '#B8555F'}">${d.change_pct > 0 ? '+' : ''}${d.change_pct}%</span>`
           : '—';
 
         return `<tr>
@@ -443,17 +532,17 @@ async function loadMarketOverview() {
           <td>${change}</td>
         </tr>`;
       }).join('')
-      : '<tr><td colspan="6" style="color:#555;text-align:center">No ARKB data</td></tr>';
+      : '<tr><td colspan="6" style="color:var(--caption);text-align:center">No ARKB data</td></tr>';
 
     $('market-overview').innerHTML = `
       <table>
         <thead><tr><th>Symbol</th><th>Last</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Change</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
-      <small style="display:block;margin-top:8px;color:#666">Updated: ${json.timestamp || new Date().toISOString()}</small>
+      <small style="display:block;margin-top:8px;color:var(--caption)">Updated: ${json.timestamp || new Date().toISOString()}</small>
     `;
   } catch (error) {
-    $('market-overview').innerHTML = '<div style="color:#f44336;text-align:center">Failed to load market overview</div>';
+    $('market-overview').innerHTML = '<div style="color:#B8555F;text-align:center">Failed to load market overview</div>';
   }
 }
 
@@ -465,18 +554,18 @@ const chart = new Chart(ctx, {
     datasets: [
       {
         label: 'Premium/Discount (bps)',
-        data: [], borderColor: '#4caf50', borderWidth: 1.5,
+        data: [], borderColor: '#6F86FF', borderWidth: 1.5,
         pointRadius: 0, fill: true,
         backgroundColor: (chartCtx) => {
           const gradient = chartCtx.chart.ctx.createLinearGradient(0, 0, 0, 200);
-          gradient.addColorStop(0, 'rgba(76,175,80,0.15)');
-          gradient.addColorStop(1, 'rgba(76,175,80,0.01)');
+          gradient.addColorStop(0, 'rgba(111,134,255,0.15)');
+          gradient.addColorStop(1, 'rgba(111,134,255,0.01)');
           return gradient;
         },
         tension: 0.1,
       },
-      { label: 'Trigger (+)', data: [], borderColor: 'rgba(76,175,80,0.25)', borderWidth: 1, borderDash: [5, 5], pointRadius: 0, fill: false },
-      { label: 'Trigger (−)', data: [], borderColor: 'rgba(244,67,54,0.25)', borderWidth: 1, borderDash: [5, 5], pointRadius: 0, fill: false },
+      { label: 'Trigger (+)', data: [], borderColor: 'rgba(79,154,110,0.25)', borderWidth: 1, borderDash: [5, 5], pointRadius: 0, fill: false },
+      { label: 'Trigger (−)', data: [], borderColor: 'rgba(184,85,95,0.25)', borderWidth: 1, borderDash: [5, 5], pointRadius: 0, fill: false },
     ]
   },
   options: {
@@ -486,22 +575,22 @@ const chart = new Chart(ctx, {
     scales: {
       x: {
         type: 'time',
-        grid: { color: '#0a1a0a' },
-        ticks: { color: '#445', maxTicksLimit: 10 },
+        grid: { color: '#7DA5FF20' },
+        ticks: { color: '#7F94BA', maxTicksLimit: 10 },
       },
       y: {
-        grid: { color: '#0a1a0a' },
-        ticks: { color: '#445' },
-        title: { display: true, text: 'basis points', color: '#445' },
+        grid: { color: '#7DA5FF20' },
+        ticks: { color: '#7F94BA' },
+        title: { display: true, text: 'basis points', color: '#7F94BA' },
       }
     },
     plugins: {
-      legend: { labels: { color: '#555', font: { size: 11 } } },
+      legend: { labels: { color: '#7F94BA', font: { size: 11 } } },
       tooltip: {
-        backgroundColor: '#0e1a0a',
-        titleColor: '#aaa',
-        bodyColor: '#ccc',
-        borderColor: '#1f3a0f',
+        backgroundColor: 'rgba(17,29,59,0.92)',
+        titleColor: '#B8C8E6',
+        bodyColor: '#9AB0D4',
+        borderColor: '#7DA5FF55',
         borderWidth: 1,
       }
     }
@@ -523,9 +612,13 @@ async function tick() {
     renderSnapshot(snapshot);
     $('mode-badge').textContent = 'LIVE';
     $('mode-badge').className = 'mode mode-live';
+    $('conn-status').className = 'connected';
+    $('conn-text').textContent = 'Live';
   } catch (error) {
     $('mode-badge').textContent = 'DATA ERROR';
     $('mode-badge').className = 'mode mode-dry';
+    $('conn-status').className = '';
+    $('conn-text').textContent = 'Data Error';
   }
 }
 
@@ -534,6 +627,11 @@ tick();
 loadMarketOverview();
 setInterval(tick, 5000);
 setInterval(loadMarketOverview, 5000);
+
+$('refresh-btn').addEventListener('click', () => {
+  tick();
+  loadMarketOverview();
+});
 </script>
 </body>
 </html>
