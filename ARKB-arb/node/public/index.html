@@ -62,7 +62,7 @@
       text-align: center;
     }
     .header h1 { font-size: 19.84px; font-weight: 700; color: var(--muted); letter-spacing: 1px; margin: 0 0 2px; }
-    .header .subtitle { color: var(--caption); font-size: 12px; margin-top: 4px; }
+    .header .subtitle { color: var(--caption); font-size: 13px; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin-top: 4px; }
     .header .status-block { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
     .header .status-row { display: flex; align-items: center; gap: 8px; }
     .header .status-text { font-size: 11px; color: var(--caption); }
@@ -82,10 +82,9 @@
 
     .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; padding: 16px 24px; }
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 0 24px 16px; }
-    .grid-top { grid-template-columns: 1fr 1fr 1fr 1fr; }
-    .grid-top .card { padding: 8px 12px; display: flex; flex-direction: column; justify-content: center; }
-    .grid-top .big-number { font-size: 18px; }
-    .grid-top .signal-box { padding: 12px; }
+    .grid-top { grid-template-columns: 1fr 1fr 1fr 1fr; padding-bottom: 8.5px; }
+    .grid-top .card { padding: 14px 18px; display: flex; flex-direction: column; justify-content: center; }
+    .grid-signal { grid-template-columns: 1fr 1fr 1fr 1fr; padding-top: 8.5px; }
 
     .card {
       background: linear-gradient(145deg, var(--strong), var(--panel));
@@ -99,15 +98,17 @@
     .card h3 {
       color: var(--muted);
       font-size: 11px;
+      font-weight: 400;
       text-transform: uppercase;
       letter-spacing: 1.5px;
       margin-bottom: 6px;
     }
-    .big-number { font-size: 22px; font-weight: 700; color: var(--text); }
+    .big-number { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 22px; font-weight: 700; color: var(--text); }
     .sub { font-size: 11px; color: var(--caption); margin-top: 4px; }
+    #arkb-mid { color: #6F86FF; }
 
-    .signal-box { text-align: center; padding: 30px; }
-    .signal { font-size: 26px; font-weight: bold; transition: color 0.3s; }
+    .signal-box { text-align: left; }
+    .signal { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 22px; font-weight: bold; transition: color 0.3s; }
     .signal-neutral { color: var(--caption); }
     .signal-create  { color: var(--green); }
     .signal-redeem  { color: var(--red); }
@@ -126,6 +127,7 @@
     .chart-card h3 {
       color: var(--muted);
       font-size: 12px;
+      font-weight: 400;
       text-transform: uppercase;
       letter-spacing: 1.5px;
       margin-bottom: 12px;
@@ -152,18 +154,24 @@
     .stat-value { color: var(--text); font-size: 12px; font-weight: 600; }
 
     .mechanics {
-      background: var(--nav);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px 16px;
       margin-top: 12px;
       font-size: 12px;
       color: var(--caption);
-      line-height: 1.8;
+      line-height: 1.4;
     }
-    .mechanics div { color: var(--caption); font-size: 12px; padding-left: 12px; margin: 2px 0; }
-    .mechanics .step { color: var(--green); padding-left: 0; }
-    .mechanics .step-red { color: var(--red); padding-left: 0; }
+    .mechanics div { color: var(--caption); font-size: 12px; padding-left: 12px; margin: 1px 0; }
+    .mechanics .step, .mechanics .step-red {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 1px 7px; border-radius: 6px; font-size: 11px; font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+    .mechanics .step::before, .mechanics .step-red::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%; display: inline-block;
+    }
+    .mechanics .step { background: rgba(79,154,110,0.15); color: var(--green); border: 1px solid rgba(79,154,110,0.5); }
+    .mechanics .step::before { background: var(--green); }
+    .mechanics .step-red { background: rgba(184,85,95,0.15); color: var(--red); border: 1px solid rgba(184,85,95,0.5); }
+    .mechanics .step-red::before { background: var(--red); }
 
     .pnl-positive { color: var(--green) !important; }
     .pnl-negative { color: var(--red) !important; }
@@ -235,12 +243,12 @@
   <!-- Row 1: Prices + Signal -->
   <div class="grid grid-top">
     <div class="card">
-      <h3>ARKB ETF Price</h3>
+      <h3>ARKB Mid Price</h3>
       <div class="big-number" id="arkb-mid">—</div>
       <div class="sub">Bid: <span id="arkb-bid">—</span> &nbsp;/&nbsp; Ask: <span id="arkb-ask">—</span></div>
     </div>
     <div class="card">
-      <h3>BTC Spot Price</h3>
+      <h3>BTC Price</h3>
       <div class="big-number" id="btc-price">—</div>
       <div class="sub">Coinbase real-time</div>
     </div>
@@ -249,36 +257,36 @@
       <div class="big-number" id="nav">—</div>
       <div class="sub">BTC/Share: <span id="btc-per-share">—</span> <span id="btc-per-share-source" style="font-size:10px;color:#888"></span></div>
     </div>
-    <div class="card signal-box">
-      <h3>Signal</h3>
-      <div class="signal signal-neutral" id="signal">NEUTRAL</div>
-      <div class="sub" id="prem-disc" style="margin-top:8px;">Premium/Discount: — bps</div>
+    <div class="card">
+      <h3>Premium / Discount</h3>
+      <div class="big-number" id="prem-bps">—</div>
+      <div class="sub">Trigger: ±22.5 bps</div>
     </div>
   </div>
 
-  <!-- Row 2: Stats -->
-  <div class="grid">
+  <!-- Row 2: Arb Signal + Stats -->
+  <div class="grid grid-signal">
+    <div class="card signal-box" style="grid-column: span 2">
+      <h3>Arb Signal</h3>
+      <div class="signal signal-neutral" id="signal">NEUTRAL</div>
+      <div class="sub" id="signal-spread">Spread after costs: — bps</div>
+    </div>
     <div class="card">
       <h3>Session P&amp;L</h3>
       <div class="big-number" id="total-pnl">$0.00</div>
-      <div class="sub">Per creation unit (5,000 shares)</div>
+      <div class="sub" id="pnl-stats">Trades: 0 &nbsp;|&nbsp; Win: 0.0%</div>
     </div>
     <div class="card">
-      <h3>Trade Count</h3>
-      <div class="big-number" id="trade-count">0</div>
-      <div class="sub">Win rate: <span id="win-rate">0.0</span>%</div>
-    </div>
-    <div class="card">
-      <h3>Cost Threshold</h3>
-      <div class="big-number" id="threshold">—</div>
-      <div class="sub">bps (round-trip costs + min spread)</div>
+      <h3>Session Time</h3>
+      <div class="big-number" id="session-time">0.0</div>
+      <div class="sub">minutes running</div>
     </div>
   </div>
 
   <!-- Chart -->
   <div class="chart-container">
     <div class="chart-card">
-      <h3>ARKB Premium / Discount (bps) — Live</h3>
+      <h3 style="font-weight:700">Premium / Discount (bps) — Rolling 10 min</h3>
       <canvas id="premChart" height="70"></canvas>
     </div>
   </div>
@@ -297,22 +305,7 @@
     </div>
 
     <div class="card">
-      <h3>Arb Mechanics</h3>
-      <div class="mechanics">
-        <div><span class="step">🟢 CREATE</span> — ARKB trading at <strong>premium</strong></div>
-        <div>Buy BTC on spot</div>
-        <div>→ Deliver to <strong>Coinbase Custody</strong></div>
-        <div>→ Receive 5,000 ARKB shares from ARK/21Shares</div>
-        <div>→ Sell ARKB on exchange → capture premium</div>
-        <br>
-        <div><span class="step-red">🔴 REDEEM</span> — ARKB trading at <strong>discount</strong></div>
-        <div>Buy ARKB on exchange (below NAV)</div>
-        <div>→ Redeem with <strong>ARK / 21Shares</strong></div>
-        <div>→ Receive BTC from Coinbase Custody</div>
-        <div>→ Sell BTC on spot → capture discount</div>
-      </div>
-
-      <h3 style="margin-top:20px;">Cost Model</h3>
+      <h3>Cost Breakdown</h3>
       <div id="cost-info">
         <div class="stat-row"><span class="stat-label">Create/Redeem Fee</span><span class="stat-value" id="cost-fee">—</span></div>
         <div class="stat-row"><span class="stat-label">ETF Commission</span><span class="stat-value" id="cost-comm">—</span></div>
@@ -328,6 +321,25 @@
     <div class="card">
       <div class="label" style="margin-bottom:10px">Market Overview</div>
       <div id="market-overview" style="color:var(--caption);text-align:left">Loading...</div>
+    </div>
+  </div>
+
+  <div style="margin: 0 24px 16px;">
+    <div class="card">
+      <h3 style="font-weight:700">Arb Mechanics</h3>
+      <div class="mechanics">
+        <div style="margin-bottom:6px"><span class="step">CREATE</span> — ARKB trading at <strong>premium</strong></div>
+        <div>Buy BTC on spot</div>
+        <div>→ Deliver to <strong>Coinbase Custody</strong></div>
+        <div>→ Receive 5,000 ARKB shares from ARK/21Shares</div>
+        <div>→ Sell ARKB on exchange → capture premium</div>
+        <br>
+        <div style="margin-top:6px;margin-bottom:6px"><span class="step-red">REDEEM</span> — ARKB trading at <strong>discount</strong></div>
+        <div>Buy ARKB on exchange (below NAV)</div>
+        <div>→ Redeem with <strong>ARK / 21Shares</strong></div>
+        <div>→ Receive BTC from Coinbase Custody</div>
+        <div>→ Sell BTC on spot → capture discount</div>
+      </div>
     </div>
   </div>
 
@@ -454,26 +466,29 @@ function renderSnapshot(s) {
   $('btc-per-share').textContent = CFG.etf.btcPerShare.toFixed(8);
   $('btc-per-share-source').textContent = '(config)';
 
-  const sigEl = $('signal');
-  sigEl.textContent = s.signal;
-  sigEl.className = 'signal signal-' + s.signal.toLowerCase();
-
   const sign = s.premBps >= 0 ? '+' : '';
-  $('prem-disc').innerHTML = `Premium/Discount: <span class="${s.premBps >= 0 ? 'prem-positive' : 'prem-negative'}">${sign}${fmtN(s.premBps, 1)} bps</span>`;
+  const premEl = $('prem-bps');
+  premEl.textContent = sign + fmtN(s.premBps, 1) + ' bps';
+  premEl.className = 'big-number ' + (s.premBps >= 0 ? 'prem-positive' : 'prem-negative');
+
+  const sigEl = $('signal');
+  sigEl.className = 'signal signal-' + s.signal.toLowerCase();
+  if (s.signal === 'CREATE') sigEl.textContent = '🟢 CREATE SIGNAL';
+  else if (s.signal === 'REDEEM') sigEl.textContent = '🔴 REDEEM SIGNAL';
+  else sigEl.textContent = '⚪ NEUTRAL — Watching...';
+
+  const spreadAfterCosts = Math.abs(s.premBps) - totalCostBps(s.arkbMid);
+  $('signal-spread').textContent = 'Spread after costs: ' + fmtN(spreadAfterCosts, 1) + ' bps';
 
   const pnlEl = $('total-pnl');
   pnlEl.textContent = '$' + fmtN(state.totalPnl, 2);
-  pnlEl.className = 'big-number ' + (state.totalPnl >= 0 ? 'pnl-positive' : 'pnl-negative');
-  $('trade-count').textContent = state.tradeCount;
-  $('win-rate').textContent = fmtN(state.winRate, 1);
-  $('threshold').textContent = '±' + fmtN(s.trigger, 1);
+  $('pnl-stats').textContent = `Trades: ${state.tradeCount}  |  Win: ${fmtN(state.winRate, 1)}%`;
+  $('session-time').textContent = ((Date.now() - state.startTime) / 60000).toFixed(1);
 
   const t = new Date(s.timestamp);
   chart.data.datasets[0].data.push({ x: t, y: s.premBps });
-  chart.data.datasets[1].data.push({ x: t, y: s.trigger });
-  chart.data.datasets[2].data.push({ x: t, y: -s.trigger });
   if (chart.data.datasets[0].data.length > 600) {
-    chart.data.datasets.forEach((ds) => ds.data.shift());
+    chart.data.datasets[0].data.shift();
   }
   chart.update('none');
 
@@ -554,18 +569,14 @@ const chart = new Chart(ctx, {
     datasets: [
       {
         label: 'Premium/Discount (bps)',
-        data: [], borderColor: '#6F86FF', borderWidth: 1.5,
-        pointRadius: 0, fill: true,
-        backgroundColor: (chartCtx) => {
-          const gradient = chartCtx.chart.ctx.createLinearGradient(0, 0, 0, 200);
-          gradient.addColorStop(0, 'rgba(111,134,255,0.15)');
-          gradient.addColorStop(1, 'rgba(111,134,255,0.01)');
-          return gradient;
-        },
-        tension: 0.1,
+        data: [],
+        borderColor: '#6F86FF',
+        backgroundColor: '#7059FB18',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0.3,
+        fill: true,
       },
-      { label: 'Trigger (+)', data: [], borderColor: 'rgba(79,154,110,0.25)', borderWidth: 1, borderDash: [5, 5], pointRadius: 0, fill: false },
-      { label: 'Trigger (−)', data: [], borderColor: 'rgba(184,85,95,0.25)', borderWidth: 1, borderDash: [5, 5], pointRadius: 0, fill: false },
     ]
   },
   options: {
@@ -573,19 +584,14 @@ const chart = new Chart(ctx, {
     animation: false,
     interaction: { mode: 'index', intersect: false },
     scales: {
-      x: {
-        type: 'time',
-        grid: { color: '#7DA5FF20' },
-        ticks: { color: '#7F94BA', maxTicksLimit: 10 },
-      },
+      x: { type: 'time', display: false },
       y: {
         grid: { color: '#7DA5FF20' },
-        ticks: { color: '#7F94BA' },
-        title: { display: true, text: 'basis points', color: '#7F94BA' },
+        ticks: { color: '#7F94BA', callback: (v) => v.toFixed(1) + ' bps' },
       }
     },
     plugins: {
-      legend: { labels: { color: '#7F94BA', font: { size: 11 } } },
+      legend: { display: false },
       tooltip: {
         backgroundColor: 'rgba(17,29,59,0.92)',
         titleColor: '#B8C8E6',
