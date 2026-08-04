@@ -18,6 +18,8 @@ const requiredFilesToCopy = [
   ['staticwebapp.config.json', 'staticwebapp.config.json'],
   ['public/index.html', 'index.html'],
   ['public/index.html', 'public/index.html'],
+  ['public/openexa_logo.webp', 'openexa_logo.webp'],
+  ['public/openexa_logo.webp', 'public/openexa_logo.webp'],
   ['lib/utils.js', 'lib/utils.js'],
   ['lib/discord.js', 'lib/discord.js'],
 ];
@@ -74,6 +76,8 @@ function verifyDistManifest() {
   const requiredDistFiles = [
     'index.html',
     'public/index.html',
+    'openexa_logo.webp',
+    'public/openexa_logo.webp',
     'staticwebapp.config.json',
     'config.json',
     'dashboard.js',

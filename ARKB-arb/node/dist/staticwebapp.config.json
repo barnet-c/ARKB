@@ -9,6 +9,7 @@
     ".json": "application/json",
     ".html": "text/html",
     ".js": "application/javascript",
-    ".csv": "text/csv"
+    ".csv": "text/csv",
+    ".webp": "image/webp"
   }
 }
