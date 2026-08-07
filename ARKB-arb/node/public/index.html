@@ -260,7 +260,7 @@
     <div class="card">
       <h3>Premium / Discount</h3>
       <div class="big-number" id="prem-bps">—</div>
-      <div class="sub">Trigger: ±22.5 bps</div>
+      <div class="sub">Trigger: ±55.0 bps</div>
     </div>
   </div>
 
@@ -312,7 +312,15 @@
         <div class="stat-row"><span class="stat-label">BTC Execution</span><span class="stat-value" id="cost-btc">—</span></div>
         <div class="stat-row"><span class="stat-label">Market Impact (×2)</span><span class="stat-value" id="cost-impact">—</span></div>
         <div class="stat-row"><span class="stat-label">BTC Spot Spread</span><span class="stat-value" id="cost-spread">—</span></div>
-        <div class="stat-row"><span class="stat-label">Mgmt Fee (21 bps/yr)</span><span class="stat-value">continuous accrual</span></div>
+        <div class="stat-row" style="border-bottom:none">
+          <span class="stat-label" style="color:var(--bright);font-weight:700">TOTAL</span>
+          <span class="stat-value" id="cost-total" style="color:var(--bright)">—</span>
+        </div>
+      </div>
+      <div style="margin-top:14px">
+        <div class="label" style="margin-bottom:6px">Creation Unit</div>
+        <div class="big-number" id="cu-value" style="font-size:16px;color:#C9A84C">$100,000.00</div>
+        <div class="sub">5,000 shares &nbsp;|&nbsp; 1.657961534232 BTC</div>
       </div>
     </div>
   </div>
@@ -355,14 +363,14 @@ const fmtN = (n, d = 2) => n.toLocaleString('en-US', { minimumFractionDigits: d,
 const CFG = {
   etf: {
     creationUnitShares: 5000,
-    btcPerShare: 0.000303,
+    btcPerShare: 0.0003315923068464,
   },
   costs: {
-    creationRedemptionFeeUsd: 200,
+    creationRedemptionFeeUsd: 500,
     etfCommissionPerShare: 0.005,
-    btcExecutionBps: 2,
+    btcExecutionBps: 0,
     marketImpactBps: 1,
-    btcSpotSpreadBps: 2,
+    btcSpotSpreadBps: 1,
   },
   signals: {
     minSpreadAfterCostsBps: 10,
@@ -386,6 +394,8 @@ const state = {
   lastSignalAt: 0,
 };
 
+let liveArkb = null;
+
 function totalCostBps(midPrice) {
   const c = CFG.costs;
   const cu = CFG.etf.creationUnitShares;
@@ -408,16 +418,20 @@ function nextSnapshot(btcPrice) {
   state.basisBps += (Math.random() - 0.5) * 1.4;
   state.basisBps = Math.max(-60, Math.min(60, state.basisBps));
 
-  const mid = nav * (1 + state.basisBps / 10000);
-  const halfSpread = mid * 0.00015;
-  const bid = mid - halfSpread;
-  const ask = mid + halfSpread;
+  const simMid = nav * (1 + state.basisBps / 10000);
+  const halfSpread = simMid * 0.00015;
+
+  const bid = liveArkb?.bid ?? (simMid - halfSpread);
+  const ask = liveArkb?.ask ?? (simMid + halfSpread);
+  const mid = liveArkb?.last ?? ((bid + ask) / 2);
+
+  const premBps = nav > 0 ? ((mid - nav) / nav) * 10000 : state.basisBps;
   const costBps = totalCostBps(mid);
   const trigger = costBps + CFG.signals.minSpreadAfterCostsBps;
 
   let signal = 'NEUTRAL';
-  if (state.basisBps > trigger) signal = 'CREATE';
-  if (state.basisBps < -trigger) signal = 'REDEEM';
+  if (premBps > trigger) signal = 'CREATE';
+  if (premBps < -trigger) signal = 'REDEEM';
 
   return {
     timestamp: new Date().toISOString(),
@@ -426,7 +440,7 @@ function nextSnapshot(btcPrice) {
     arkbAsk: ask,
     arkbMid: mid,
     nav,
-    premBps: state.basisBps,
+    premBps,
     trigger,
     signal,
   };
@@ -479,6 +493,8 @@ function renderSnapshot(s) {
 
   const spreadAfterCosts = Math.abs(s.premBps) - totalCostBps(s.arkbMid);
   $('signal-spread').textContent = 'Spread after costs: ' + fmtN(spreadAfterCosts, 1) + ' bps';
+  $('cost-total').textContent = fmtN(totalCostBps(s.arkbMid), 2) + ' bps';
+  $('cu-value').textContent = '$' + fmtN(s.btcPrice * 1.657961534232, 3);
 
   const pnlEl = $('total-pnl');
   pnlEl.textContent = '$' + fmtN(state.totalPnl, 2);
@@ -531,6 +547,10 @@ async function loadMarketOverview() {
 
     const json = await res.json();
     const arkbEntries = Object.entries(json.market_data || {}).filter(([sym]) => sym.toUpperCase() === 'ARKB');
+
+    if (arkbEntries.length > 0) {
+      liveArkb = arkbEntries[0][1];
+    }
 
     const rows = arkbEntries.length > 0
       ? arkbEntries.map(([sym, d]) => {
