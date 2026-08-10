@@ -1,11 +1,567 @@
-/* ARKB Arbitrage Dashboard — client logic */
+/* ══════════════════════════════════════════════════════════════════
+   ARKB — Creation / Redemption Desk
+   Client runtime: live basis instrumentation, drawn by hand.
+   No charting library — every pixel here is deliberate.
+   ══════════════════════════════════════════════════════════════════ */
+
 const $ = (id) => document.getElementById(id);
+const REDUCED = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+/* ── formatting ──────────────────────────────────────────────── */
 const fmtN = (n, d = 2) => {
   const v = Number(n);
   if (!Number.isFinite(v)) return '—';
   return v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
 };
+const fmtSigned = (n, d = 1) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '—';
+  return `${v > 0 ? '+' : ''}${fmtN(v, d)}`;
+};
+const fmtUsd = (n, d = 2) => (Number.isFinite(Number(n)) ? `$${fmtN(n, d)}` : '—');
+const fmtCompact = (n) => {
+  const v = Math.abs(Number(n));
+  if (!Number.isFinite(v)) return '—';
+  if (v >= 1e6) return `$${fmtN(n / 1e6, 2)}M`;
+  if (v >= 1e3) return `$${fmtN(n / 1e3, 1)}K`;
+  return fmtUsd(n, 2);
+};
+const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
+const hhmmss = (d) => new Date(d).toLocaleTimeString('en-US', { hour12: false });
 
+/* ── number tweening ─────────────────────────────────────────── */
+const tweens = new WeakMap();
+function animate(el, to, format, duration = 620) {
+  if (!el) return;
+  const prev = tweens.get(el);
+  if (prev?.raf) cancelAnimationFrame(prev.raf);
+  if (!Number.isFinite(to)) {
+    el.textContent = format(NaN);
+    tweens.set(el, { value: NaN });
+    return;
+  }
+  const from = Number.isFinite(prev?.value) ? prev.value : to;
+  if (REDUCED || Math.abs(to - from) < 1e-9) {
+    el.textContent = format(to);
+    tweens.set(el, { value: to });
+    return;
+  }
+  const start = performance.now();
+  const step = (now) => {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 4);
+    const v = from + (to - from) * eased;
+    el.textContent = format(v);
+    if (t < 1) tweens.set(el, { value: v, raf: requestAnimationFrame(step) });
+    else tweens.set(el, { value: to });
+  };
+  tweens.set(el, { value: from, raf: requestAnimationFrame(step) });
+}
+
+function flash(el, dir) {
+  if (!el || REDUCED || !dir) return;
+  el.classList.remove('flash-up', 'flash-dn');
+  void el.offsetWidth;
+  el.classList.add(dir > 0 ? 'flash-up' : 'flash-dn');
+}
+
+/* ── theme ───────────────────────────────────────────────────── */
+const SUN = 'M12 17.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11M12 1.8v2.4M12 19.8v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M1.8 12h2.4M19.8 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7';
+const MOON = 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z';
+let PAL = null;
+
+function applyTheme(name) {
+  document.documentElement.setAttribute('data-theme', name);
+  const icon = $('theme-icon');
+  if (icon) icon.setAttribute('d', name === 'dark' ? MOON : SUN);
+  try { localStorage.setItem('arkb-theme', name); } catch { /* private mode */ }
+  PAL = null;
+}
+function initTheme() {
+  let saved = null;
+  try { saved = localStorage.getItem('arkb-theme'); } catch { /* ignore */ }
+  const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+  applyTheme(saved || (prefersLight ? 'light' : 'dark'));
+}
+function toggleTheme() {
+  applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+}
+
+function palette() {
+  if (PAL) return PAL;
+  const cs = getComputedStyle(document.documentElement);
+  const g = (n) => cs.getPropertyValue(n).trim();
+  PAL = {
+    pos: g('--pos') || '#2EE6A8',
+    neg: g('--neg') || '#FF5D73',
+    neu: g('--neu') || '#7C9CFF',
+    ink: g('--ink') || '#EDF1F7',
+    ink2: g('--ink-2') || '#97A1B2',
+    ink3: g('--ink-3') || '#5C6676',
+    grid: g('--grid') || 'rgba(255,255,255,.055)',
+    line2: g('--line-2') || 'rgba(255,255,255,.14)',
+  };
+  return PAL;
+}
+function rgba(color, a) {
+  const h = String(color).trim();
+  if (!h.startsWith('#')) return h;
+  let s = h.slice(1);
+  if (s.length === 3) s = s.split('').map((c) => c + c).join('');
+  const n = parseInt(s, 16);
+  if (!Number.isFinite(n)) return h;
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/* ── canvas sizing ───────────────────────────────────────────────
+   Measured once by a ResizeObserver, never per frame. Reading
+   getBoundingClientRect() inside a 60fps draw forces a synchronous
+   layout on every single frame — the classic way to make a canvas
+   dashboard cost more than it should.
+   ─────────────────────────────────────────────────────────────── */
+const canvasSizes = new WeakMap();
+const observedCanvases = [];
+
+function measure(cv) {
+  const r = cv.getBoundingClientRect();
+  canvasSizes.set(cv, { w: r.width, h: r.height });
+}
+function observeCanvas(cv) {
+  if (!cv) return;
+  measure(cv);
+  observedCanvases.push(cv);
+  if (typeof ResizeObserver === 'function') {
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const box = e.contentRect;
+        canvasSizes.set(cv, { w: box.width, h: box.height });
+      }
+    });
+    ro.observe(cv);
+  }
+}
+function remeasureAll() { observedCanvases.forEach(measure); }
+
+/* ResizeObserver is the fast path, but it only fires as part of the
+   rendering lifecycle — if the first measurement lands before layout
+   settles and no frame is ever produced, a canvas can stay stuck at a
+   bogus size forever. A slow poll costs ~10 rect reads a second (versus
+   300 if we measured inside draw) and makes that impossible. */
+function startSizeWatch() { setInterval(remeasureAll, 500); }
+
+function fitCanvas(cv) {
+  const size = canvasSizes.get(cv);
+  if (!size) measure(cv);
+  const { w, h } = canvasSizes.get(cv) || { w: 0, h: 0 };
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const pw = Math.max(1, Math.round(w * dpr));
+  const ph = Math.max(1, Math.round(h * dpr));
+  if (cv.width !== pw || cv.height !== ph) { cv.width = pw; cv.height = ph; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  return { ctx, w, h };
+}
+
+/* ══════════════════════════════════════════════════════════════
+   SPARKLINE — the whisper version of a chart
+   ══════════════════════════════════════════════════════════════ */
+class Spark {
+  constructor(canvas, tone = 'auto') {
+    this.cv = canvas;
+    this.tone = tone;
+    this.data = [];
+    this.dirty = true;
+    observeCanvas(canvas);
+  }
+  push(v) {
+    if (!Number.isFinite(v)) return;
+    this.data.push(v);
+    if (this.data.length > 180) this.data.shift();
+    this.dirty = true;
+  }
+  draw() {
+    if (!this.cv || !this.dirty) return;
+    this.dirty = false;
+    const { ctx, w, h } = fitCanvas(this.cv);
+    const d = this.data;
+    if (d.length < 2 || w < 4) return;
+
+    let lo = Infinity; let hi = -Infinity;
+    for (const v of d) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
+    const pad = (hi - lo) * 0.18;
+    lo -= pad; hi += pad;
+
+    const P = palette();
+    const rising = d[d.length - 1] >= d[0];
+    const color = this.tone === 'auto' ? (rising ? P.pos : P.neg) : P[this.tone] || P.neu;
+    const X = (i) => (i / (d.length - 1)) * w;
+    const Y = (v) => h - ((v - lo) / (hi - lo)) * (h - 3) - 1.5;
+
+    const trace = () => {
+      ctx.beginPath();
+      ctx.moveTo(X(0), Y(d[0]));
+      for (let i = 1; i < d.length; i += 1) {
+        const xc = (X(i - 1) + X(i)) / 2;
+        const yc = (Y(d[i - 1]) + Y(d[i])) / 2;
+        ctx.quadraticCurveTo(X(i - 1), Y(d[i - 1]), xc, yc);
+      }
+      ctx.lineTo(X(d.length - 1), Y(d[d.length - 1]));
+    };
+
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, rgba(color, 0.24));
+    grad.addColorStop(1, rgba(color, 0));
+    trace();
+    ctx.lineTo(X(d.length - 1), h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    trace();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(X(d.length - 1), Y(d[d.length - 1]), 2.2, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   GAP CHART — the signature instrument
+   Basis against zero, with the profitable bands drawn in.
+   ══════════════════════════════════════════════════════════════ */
+class GapChart {
+  constructor(canvas) {
+    this.cv = canvas;
+    this.pts = [];
+    this.trigger = NaN;
+    this.range = 600000;
+    this.yMax = 24;
+    this.hoverX = null;
+    this.raf = null;
+    this.roShown = false;
+    this.roW = 148;
+    /* session density: 0.5 bps buckets spanning ±200 bps, kept in step
+       with this.pts so the marginal always describes the same window */
+    this.hist = new Float64Array(801);
+    observeCanvas(canvas);
+
+    canvas.addEventListener('pointermove', (e) => {
+      const r = canvas.getBoundingClientRect();
+      this.hoverX = e.clientX - r.left;
+    });
+    canvas.addEventListener('pointerleave', () => { this.hoverX = null; });
+
+    this.draw();
+    const tick = () => { this.draw(); this.raf = requestAnimationFrame(tick); };
+    this.raf = requestAnimationFrame(tick);
+  }
+
+  push(t, y) {
+    if (!Number.isFinite(y)) return;
+    const time = t instanceof Date ? t.getTime() : new Date(t).getTime();
+    if (!Number.isFinite(time)) return;
+    const last = this.pts[this.pts.length - 1];
+    if (last && time <= last.t) return;
+    this.pts.push({ t: time, y });
+    this.hist[GapChart.bucket(y)] += 1;
+    if (this.pts.length > 4000) {
+      const dropped = this.pts.shift();
+      const b = GapChart.bucket(dropped.y);
+      this.hist[b] = Math.max(0, this.hist[b] - 1);
+    }
+  }
+
+  static bucket(y) { return clamp(Math.round((y + 200) * 2), 0, 800); }
+
+  seed(rows) {
+    if (!Array.isArray(rows)) return;
+    for (const r of rows) this.push(r.t, Number(r.premBps));
+  }
+
+  setRange(ms) { this.range = ms; }
+  setTrigger(v) { this.trigger = v; }
+
+  draw() {
+    const { ctx, w, h } = fitCanvas(this.cv);
+    if (w < 20 || h < 20) return;
+    const P = palette();
+    const HIST = w > 640;
+    const PAD = { t: 18, r: HIST ? 124 : 56, b: 26, l: 6 };
+    const x0 = PAD.l; const x1 = w - PAD.r;
+    const yT = PAD.t; const yB = h - PAD.b;
+    if (x1 <= x0 || yB <= yT) return;
+
+    /* ── time window ── */
+    const now = this.pts.length ? this.pts[this.pts.length - 1].t : Date.now();
+    let t0; let t1;
+    if (this.range > 0) { t1 = now; t0 = now - this.range; } else { t0 = this.pts.length ? this.pts[0].t : now - 60000; t1 = now; }
+    if (t1 - t0 < 2000) t1 = t0 + 2000;
+
+    /* index range rather than a slice — this runs 60 times a second */
+    const n = this.pts.length;
+    let i0 = 0;
+    for (let i = n - 1; i >= 0; i -= 1) {
+      if (this.pts[i].t < t0) { i0 = i; break; }
+    }
+    const visCount = n - i0;
+
+    /* ── vertical scale, eased so it never snaps ── */
+    let maxAbs = 0;
+    for (let i = i0; i < n; i += 1) {
+      const a = Math.abs(this.pts[i].y);
+      if (a > maxAbs) maxAbs = a;
+    }
+    const trg = Number.isFinite(this.trigger) ? this.trigger : 0;
+    const target = Math.max(maxAbs * 1.25, trg * 1.6, 8);
+    this.yMax += (target - this.yMax) * (REDUCED ? 1 : 0.12);
+    const yMax = this.yMax;
+
+    const X = (t) => x0 + ((t - t0) / (t1 - t0)) * (x1 - x0);
+    const Y = (v) => yT + ((yMax - v) / (yMax * 2)) * (yB - yT);
+    const Y0 = Y(0);
+
+    /* ── profitable bands ── */
+    if (trg > 0 && trg < yMax) {
+      ctx.fillStyle = rgba(P.pos, 0.055);
+      ctx.fillRect(x0, yT, x1 - x0, Y(trg) - yT);
+      ctx.fillStyle = rgba(P.neg, 0.055);
+      ctx.fillRect(x0, Y(-trg), x1 - x0, yB - Y(-trg));
+    }
+
+    /* ── grid ── */
+    ctx.save();
+    ctx.strokeStyle = P.grid;
+    ctx.lineWidth = 1;
+    const half = yMax / 2;
+    [half, -half].forEach((v) => {
+      ctx.beginPath();
+      ctx.moveTo(x0, Math.round(Y(v)) + 0.5);
+      ctx.lineTo(x1, Math.round(Y(v)) + 0.5);
+      ctx.stroke();
+    });
+    ctx.restore();
+
+    /* trigger rails */
+    if (trg > 0 && trg < yMax) {
+      ctx.save();
+      ctx.setLineDash([3, 5]);
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = rgba(P.pos, 0.45);
+      ctx.beginPath(); ctx.moveTo(x0, Y(trg)); ctx.lineTo(x1, Y(trg)); ctx.stroke();
+      ctx.strokeStyle = rgba(P.neg, 0.45);
+      ctx.beginPath(); ctx.moveTo(x0, Y(-trg)); ctx.lineTo(x1, Y(-trg)); ctx.stroke();
+      ctx.restore();
+    }
+
+    /* zero — NAV parity */
+    ctx.save();
+    ctx.strokeStyle = P.line2;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x0, Math.round(Y0) + 0.5);
+    ctx.lineTo(x1, Math.round(Y0) + 0.5);
+    ctx.stroke();
+    ctx.restore();
+
+    /* ── the series ── */
+    if (visCount >= 2) {
+      const pts = this.pts;
+      const trace = (c) => {
+        c.beginPath();
+        c.moveTo(X(pts[i0].t), Y(pts[i0].y));
+        for (let i = i0 + 1; i < n; i += 1) {
+          const px = X(pts[i - 1].t); const py = Y(pts[i - 1].y);
+          const xc = (px + X(pts[i].t)) / 2; const yc = (py + Y(pts[i].y)) / 2;
+          c.quadraticCurveTo(px, py, xc, yc);
+        }
+        c.lineTo(X(pts[n - 1].t), Y(pts[n - 1].y));
+      };
+      const area = (c) => {
+        trace(c);
+        c.lineTo(X(pts[n - 1].t), Y0);
+        c.lineTo(X(pts[i0].t), Y0);
+        c.closePath();
+      };
+
+      const paint = (color, top, bottom) => {
+        if (bottom - top < 0.5) return;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x0, top, x1 - x0, bottom - top);
+        ctx.clip();
+
+        const g = ctx.createLinearGradient(0, top, 0, bottom);
+        const upward = top < Y0;
+        g.addColorStop(0, rgba(color, upward ? 0.34 : 0.02));
+        g.addColorStop(1, rgba(color, upward ? 0.02 : 0.34));
+        ctx.fillStyle = g;
+        area(ctx);
+        ctx.fill();
+
+        ctx.beginPath();
+        trace(ctx);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.shadowColor = rgba(color, 0.5);
+        ctx.shadowBlur = 14;
+        ctx.stroke();
+        ctx.restore();
+      };
+
+      paint(P.pos, yT, Y0);
+      paint(P.neg, Y0, yB);
+
+      /* live marker */
+      const lastPt = pts[n - 1];
+      const lx = X(lastPt.t); const ly = Y(lastPt.y);
+      const c = lastPt.y >= 0 ? P.pos : P.neg;
+      const beat = REDUCED ? 0.5 : (Math.sin(performance.now() / 620) + 1) / 2;
+      ctx.beginPath();
+      ctx.arc(lx, ly, 4 + beat * 7, 0, Math.PI * 2);
+      ctx.fillStyle = rgba(c, 0.18 * (1 - beat));
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(lx, ly, 3.4, 0, Math.PI * 2);
+      ctx.fillStyle = c;
+      ctx.shadowColor = rgba(c, 0.8);
+      ctx.shadowBlur = 12;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    /* ── marginal density ──────────────────────────────────────
+       Where the basis has actually spent its time, sharing this
+       chart's exact vertical scale. A wide bar out past the dashed
+       rail means the gap lives in profitable territory; a tall spike
+       hugging zero means the fund is tracking tightly.
+       ───────────────────────────────────────────────────────── */
+    if (HIST) {
+      const hx0 = w - 66; const hx1 = w - 6;
+      const BUCKETS = 46;
+      const acc = new Float64Array(BUCKETS);
+      const span = yMax * 2;
+      for (let b = 0; b <= 800; b += 1) {
+        const v = this.hist[b];
+        if (!v) continue;
+        const centre = (b / 2) - 200;
+        const idx = Math.floor(((yMax - centre) / span) * BUCKETS);
+        acc[clamp(idx, 0, BUCKETS - 1)] += v;
+      }
+      let peak = 0;
+      for (let i = 0; i < BUCKETS; i += 1) if (acc[i] > peak) peak = acc[i];
+
+      if (peak > 0) {
+        const bh = (yB - yT) / BUCKETS;
+        for (let i = 0; i < BUCKETS; i += 1) {
+          if (!acc[i]) continue;
+          const centre = yMax - ((i + 0.5) / BUCKETS) * span;
+          const inMoney = trg > 0 && Math.abs(centre) > trg;
+          const tone = centre >= 0 ? P.pos : P.neg;
+          ctx.fillStyle = inMoney ? rgba(tone, 0.72) : rgba(tone, 0.26);
+          const bw = (acc[i] / peak) * (hx1 - hx0);
+          ctx.fillRect(hx0, yT + i * bh + 0.4, Math.max(1, bw), Math.max(1, bh - 0.8));
+        }
+        ctx.save();
+        ctx.strokeStyle = P.grid;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(Math.round(hx0) + 0.5, yT);
+        ctx.lineTo(Math.round(hx0) + 0.5, yB);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    /* ── right axis ── */
+    ctx.save();
+    ctx.font = '500 10.5px Inter, -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    const label = (v, color) => {
+      const y = Y(v);
+      if (y < yT - 2 || y > yB + 2) return;
+      ctx.fillStyle = color;
+      ctx.fillText(`${v > 0 ? '+' : ''}${fmtN(v, v === 0 ? 0 : 1)}`, x1 + 9, y);
+    };
+    label(0, P.ink3);
+    if (trg > 0 && trg < yMax * 0.94) { label(trg, rgba(P.pos, 0.85)); label(-trg, rgba(P.neg, 0.85)); }
+    label(half, P.ink3);
+    label(-half, P.ink3);
+    ctx.restore();
+
+    /* ── time axis ── */
+    ctx.save();
+    ctx.font = '500 10.5px Inter, -apple-system, system-ui, sans-serif';
+    ctx.fillStyle = P.ink3;
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillText(hhmmss(t0), x0, yB + 9);
+    ctx.textAlign = 'right';
+    ctx.fillText(hhmmss(t1), x1, yB + 9);
+    ctx.restore();
+
+    /* ── crosshair ── */
+    const ro = $('readout');
+    if (this.hoverX != null && this.hoverX > x0 && this.hoverX < x1 && visCount > 0) {
+      const tAt = t0 + ((this.hoverX - x0) / (x1 - x0)) * (t1 - t0);
+      let best = this.pts[i0]; let bd = Infinity;
+      for (let i = i0; i < n; i += 1) {
+        const d = Math.abs(this.pts[i].t - tAt);
+        if (d < bd) { bd = d; best = this.pts[i]; }
+      }
+      const hx = X(best.t); const hy = Y(best.y);
+      const c = best.y >= 0 ? P.pos : P.neg;
+
+      ctx.save();
+      ctx.setLineDash([2, 4]);
+      ctx.strokeStyle = P.line2;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(hx, yT); ctx.lineTo(hx, yB); ctx.stroke();
+      ctx.restore();
+
+      ctx.beginPath();
+      ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = c;
+      ctx.strokeStyle = rgba(P.ink, 0.9);
+      ctx.lineWidth = 1.5;
+      ctx.fill(); ctx.stroke();
+
+      if (ro) {
+        if (!this.roShown) { ro.hidden = false; this.roShown = true; }
+        setText('ro-time', hhmmss(best.t));
+        setText('ro-val', `${fmtSigned(best.y, 1)} bps`);
+        const inMoney = Number.isFinite(trg) && Math.abs(best.y) > trg;
+        const note = inMoney
+          ? (best.y > 0 ? 'Create cleared costs' : 'Redeem cleared costs')
+          : 'Inside the band';
+        setText('ro-note', note);
+        // offsetWidth forces layout — only re-measure when the copy actually changes
+        if (note !== this.roNote) { this.roNote = note; this.roW = ro.offsetWidth || 148; }
+        ro.style.left = `${clamp(hx - this.roW / 2, 6, Math.max(6, w - this.roW - 6))}px`;
+        $('ro-val').style.color = c;
+      }
+    } else if (ro && this.roShown) {
+      ro.hidden = true;
+      this.roShown = false;
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   CONFIG + MODEL  (mirrors lib/utils.js exactly)
+   ══════════════════════════════════════════════════════════════ */
 let CFG = {
   etf: { creationUnitShares: 5000, btcPerShare: 0.000303, sharesOutstanding: 75000000 },
   costs: {
@@ -20,50 +576,29 @@ let CFG = {
   marketOverviewUrl: 'https://btctrader-api-68276-gqbkg8bucfbndjgn.z01.azurefd.net/api/market-overview',
 };
 
-const state = {
-  startTime: Date.now(),
-  btcPrice: 0,
-  arkbMid: 0,
-  arkbBid: 0,
-  arkbAsk: 0,
-  nav: 0,
-  premBps: 0,
-  signal: 'NEUTRAL',
-  tradeCount: 0,
-  winRate: 0,
-  totalPnl: 0,
-  trades: [],
-  basisBps: 0,
-  lastSignalAt: 0,
-  lastSignal: 'NEUTRAL',
-  btcPerShare: 0.000303,
-  btcPerShareSource: 'config',
-  mode: 'standalone',
-  backendLive: false,
-};
-
-let liveArkb = null;
-let standaloneTimer = null;
-
-function totalCostBps(midPrice) {
+function costParts(mid) {
   const c = CFG.costs;
   const cu = CFG.etf.creationUnitShares;
-  const price = Number(midPrice);
-  if (!(price > 0) || !(cu > 0)) return Infinity;
-  const feeBps = (c.creationRedemptionFeeUsd / (cu * price)) * 10000;
-  const commBps = (c.etfCommissionPerShare / price) * 10000;
-  return feeBps + commBps + c.btcExecutionBps + (c.marketImpactBps * 2) + c.btcSpotSpreadBps;
+  const price = Number(mid);
+  if (!(price > 0) || !(cu > 0)) return null;
+  const notional = cu * price;
+  return {
+    fee: (c.creationRedemptionFeeUsd / notional) * 10000,
+    commission: (c.etfCommissionPerShare / price) * 10000,
+    execution: c.btcExecutionBps,
+    impact: c.marketImpactBps * 2,
+    spread: c.btcSpotSpreadBps,
+  };
 }
-
+function totalCostBps(mid) {
+  const p = costParts(mid);
+  if (!p) return Infinity;
+  return p.fee + p.commission + p.execution + p.impact + p.spread;
+}
 function evaluate(arkbMid, btcPrice, btcPerShare) {
-  const mid = Number(arkbMid);
-  const btc = Number(btcPrice);
-  const bps = Number(btcPerShare);
+  const mid = Number(arkbMid); const btc = Number(btcPrice); const bps = Number(btcPerShare);
   if (!(mid > 0) || !(btc > 0) || !(bps > 0)) {
-    return {
-      ok: false, nav: 0, premBps: 0, costBps: Infinity, triggerBps: Infinity,
-      signal: 'NEUTRAL', spreadCapturedBps: 0, pnlUsd: 0,
-    };
+    return { ok: false, nav: 0, premBps: 0, costBps: Infinity, triggerBps: Infinity, signal: 'NEUTRAL', spreadCapturedBps: 0, pnlUsd: 0 };
   }
   const nav = btc * bps;
   const premBps = ((mid - nav) / nav) * 10000;
@@ -77,9 +612,426 @@ function evaluate(arkbMid, btcPrice, btcPerShare) {
   return { ok: true, nav, premBps, costBps, triggerBps, signal, spreadCapturedBps, pnlUsd };
 }
 
+/* ══════════════════════════════════════════════════════════════
+   SESSION STATE
+   ══════════════════════════════════════════════════════════════ */
+const state = {
+  startTime: Date.now(),
+  tradeCount: 0,
+  winRate: 0,
+  totalPnl: 0,
+  trades: [],
+  basisBps: 0,
+  lastSignalAt: 0,
+  lastSignal: 'NEUTRAL',
+  btcPerShare: 0.000303,
+  btcPerShareSource: 'config',
+  mode: 'standalone',
+  backendLive: false,
+  // session analytics
+  high: -Infinity,
+  low: Infinity,
+  samples: 0,
+  inZone: 0,
+  crossings: 0,
+  wasInZone: false,
+  lastPrices: {},
+  basisTrail: [],
+  open: {},
+  lastTickAt: 0,
+};
+
+let liveArkb = null;
+let standaloneTimer = null;
+let chart = null;
+const sparks = {};
+
+/* ══════════════════════════════════════════════════════════════
+   RENDERERS
+   ══════════════════════════════════════════════════════════════ */
+
+function setStatus(kind, text) {
+  const chip = $('status-chip');
+  if (chip) chip.className = `chip ${kind || ''}`;
+  setText('status-text', text);
+}
+
+function lede(prem, signal, trigger) {
+  if (signal === 'CREATE') return 'The fund is <b>rich</b> to its bitcoin. Buying spot, delivering it and selling the new shares clears every cost.';
+  if (signal === 'REDEEM') return 'The fund is <b>cheap</b> to its bitcoin. Buying shares, redeeming the basket and selling the coin clears every cost.';
+  if (!Number.isFinite(prem)) return 'Waiting on a clean two-sided quote before the basis can be priced.';
+  const short = Number.isFinite(trigger) ? trigger - Math.abs(prem) : NaN;
+  if (Math.abs(prem) < 3) return 'ARKB is trading <b>essentially in line</b> with the bitcoin behind it. Nothing to do.';
+  return prem > 0
+    ? `A real premium, but it is <b>${fmtN(short, 1)} bps short</b> of paying for the round trip.`
+    : `A real discount, but it is <b>${fmtN(short, 1)} bps short</b> of paying for the round trip.`;
+}
+
+function renderVerdict(signal, edge, trigger, prem) {
+  document.body.dataset.state =
+    signal === 'CREATE' ? 'create' : signal === 'REDEEM' ? 'redeem' : 'neutral';
+
+  const label = signal === 'CREATE' ? 'Create' : signal === 'REDEEM' ? 'Redeem' : 'Watching';
+  setText('verdict-state', label);
+  setText('tag-signal', label === 'Watching' ? 'Watching' : `${label} live`);
+  const tag = $('tag-signal');
+  if (tag) tag.className = `tag ${signal === 'CREATE' ? 'pos' : signal === 'REDEEM' ? 'neg' : ''}`;
+
+  animate($('verdict-edge'), edge, (v) => fmtSigned(v, 1));
+  animate($('verdict-trigger'), trigger, (v) => fmtN(v, 1));
+
+  const pct = Number.isFinite(prem) && Number.isFinite(trigger) && trigger > 0
+    ? clamp((Math.abs(prem) / trigger) * 100, 0, 100)
+    : 0;
+  const fill = $('verdict-fill');
+  if (fill) fill.style.width = `${pct}%`;
+
+  const gap = Number.isFinite(prem) && Number.isFinite(trigger) ? trigger - Math.abs(prem) : NaN;
+  setText('verdict-gap', Number.isFinite(gap)
+    ? (gap > 0 ? `${fmtN(gap, 1)} bps away` : `${fmtN(-gap, 1)} bps through`)
+    : '—');
+
+  const action = $('verdict-action');
+  if (action) {
+    if (signal === 'CREATE') {
+      action.innerHTML = `<b>Create a basket.</b> Buy ${fmtN(CFG.etf.creationUnitShares * state.btcPerShare, 4)} BTC, deliver to the trust, sell ${CFG.etf.creationUnitShares.toLocaleString()} shares into the bid.`;
+    } else if (signal === 'REDEEM') {
+      action.innerHTML = `<b>Redeem a basket.</b> Lift ${CFG.etf.creationUnitShares.toLocaleString()} shares, hand them to the trust, sell the ${fmtN(CFG.etf.creationUnitShares * state.btcPerShare, 4)} BTC that comes back.`;
+    } else {
+      action.innerHTML = 'No actionable gap. The fund is tracking its bitcoin closely enough that a round trip would not pay for itself.';
+    }
+  }
+}
+
+function renderMeter(prem, trigger) {
+  const rail = $('meter-rail');
+  if (!rail || !Number.isFinite(prem)) return;
+  const trg = Number.isFinite(trigger) ? trigger : 20;
+  const domain = Math.max(trg * 1.75, Math.abs(prem) * 1.2, 15);
+  const pct = (v) => clamp(50 + (v / domain) * 50, 0.5, 99.5);
+
+  const negEdge = pct(-trg);
+  const posEdge = pct(trg);
+  const zn = $('zone-neg'); if (zn) zn.style.width = `${negEdge}%`;
+  const zp = $('zone-pos'); if (zp) zp.style.width = `${100 - posEdge}%`;
+  const hn = $('hair-neg'); if (hn) hn.style.left = `${negEdge}%`;
+  const hp = $('hair-pos'); if (hp) hp.style.left = `${posEdge}%`;
+  const nd = $('needle'); if (nd) nd.style.left = `${pct(prem)}%`;
+
+  rail.setAttribute('aria-valuemin', fmtN(-domain, 0));
+  rail.setAttribute('aria-valuemax', fmtN(domain, 0));
+  rail.setAttribute('aria-valuenow', fmtN(prem, 1));
+  rail.setAttribute('aria-valuetext',
+    `${fmtSigned(prem, 1)} basis points, against a trigger of plus or minus ${fmtN(trg, 1)}`);
+}
+
+function renderLadder(bid, ask, mid, nav) {
+  const vals = [bid, ask, mid, nav].filter((v) => Number.isFinite(v) && v > 0);
+  if (vals.length < 4) return;
+  let lo = Math.min(...vals); let hi = Math.max(...vals);
+  const span = hi - lo;
+  const pad = span > 1e-9 ? span * 0.45 : Math.max(mid * 0.0004, 0.001);
+  lo -= pad; hi += pad;
+
+  const TOP = 16; const USABLE = 236;
+  const pos = (v) => TOP + ((hi - v) / (hi - lo)) * USABLE;
+
+  const place = (id, v) => {
+    const el = $(id);
+    if (!el) return pos(v);
+    const p = pos(v);
+    el.style.top = `${p}px`;
+    // the knob glides via a CSS transition — the label has to travel with it,
+    // and it must land on the same figure the stat rail is easing toward
+    const px = el.querySelector('.px');
+    if (px) animate(px, v, (x) => fmtUsd(x, 4));
+    return p;
+  };
+
+  place('n-ask', ask);
+  place('n-bid', bid);
+  const pm = place('n-mid', mid);
+  const pn = place('n-nav', nav);
+
+  const band = $('gap-band');
+  if (band) {
+    const top = Math.min(pm, pn);
+    const height = Math.max(Math.abs(pm - pn), 2);
+    band.style.top = `${top}px`;
+    band.style.height = `${height}px`;
+    band.style.opacity = height > 4 ? '1' : '0.35';
+    const diff = mid - nav;
+    const bps = nav > 0 ? (diff / nav) * 10000 : NaN;
+    setText('gap-band-label', `${fmtSigned(diff, 4)} · ${fmtSigned(bps, 1)} bps`);
+  }
+}
+
+const WF_KEYS = [
+  { k: 'fee', label: 'Create / redeem fee', mix: 88 },
+  { k: 'commission', label: 'Share commission', mix: 68 },
+  { k: 'execution', label: 'Bitcoin execution', mix: 50 },
+  { k: 'impact', label: 'Market impact, both legs', mix: 34 },
+  { k: 'spread', label: 'Bitcoin spot spread', mix: 22 },
+];
+
+/* Built once. Rewriting innerHTML every tick would replace the nodes
+   mid-transition, so the bar would silently never animate — and it
+   would trash any text the user had selected. */
+let wfNodes = null;
+function buildWaterfall() {
+  const bar = $('wf-bar');
+  const keys = $('wf-keys');
+  if (!bar || !keys) return null;
+
+  bar.style.position = 'relative';
+  bar.innerHTML = WF_KEYS.map((d) =>
+    `<div class="wf-seg" data-k="${d.k}" style="flex:0 0 0%;background:color-mix(in oklab, var(--neu) ${d.mix}%, transparent)"></div>`
+  ).join('')
+    + '<div class="wf-seg" data-k="edge" style="flex:0 0 0%"></div>'
+    + '<div style="flex:1 1 auto"></div>'
+    + '<div class="wf-mark" title="Where the actual gap reaches"></div>';
+
+  keys.innerHTML = WF_KEYS.map((d) =>
+    `<div class="wf-key">
+       <i style="background:color-mix(in oklab, var(--neu) ${d.mix}%, transparent)"></i>
+       <span class="k">${d.label}</span>
+       <span class="v num" data-v="${d.k}">—</span>
+     </div>`
+  ).join('')
+    + `<div class="wf-key" style="border-bottom-color:transparent">
+         <i style="background:var(--accent)"></i>
+         <span class="k">Edge left over</span>
+         <span class="v num" data-v="edge">—</span>
+       </div>`;
+
+  const byKey = (root, sel, attr) =>
+    Object.fromEntries([...root.querySelectorAll(sel)].map((e) => [e.dataset[attr], e]));
+
+  return {
+    segs: byKey(bar, '.wf-seg', 'k'),
+    mark: bar.querySelector('.wf-mark'),
+    vals: byKey(keys, '[data-v]', 'v'),
+  };
+}
+
+function renderWaterfall(mid, prem, cost) {
+  const parts = costParts(mid);
+  if (!parts) return;
+  if (!wfNodes) wfNodes = buildWaterfall();
+  if (!wfNodes) return;
+
+  const gross = Math.abs(Number(prem));
+  const totalCost = Number(cost);
+  const edge = gross - totalCost;
+  const scale = Math.max(gross, totalCost) * 1.04 || 1;
+  const pct = (v) => `${clamp((v / scale) * 100, 0, 100)}%`;
+
+  for (const d of WF_KEYS) {
+    wfNodes.segs[d.k].style.flexBasis = pct(parts[d.k]);
+    wfNodes.vals[d.k].textContent = `${fmtN(parts[d.k], 2)} bps`;
+  }
+  wfNodes.segs.edge.style.flexBasis = pct(Math.max(0, edge));
+  wfNodes.vals.edge.textContent = `${fmtSigned(edge, 2)} bps`;
+  wfNodes.vals.edge.style.color = edge > 0 ? 'var(--pos)' : 'var(--ink-3)';
+  wfNodes.mark.style.left = pct(gross);
+
+  setText('wf-gross', fmtN(gross, 1));
+  setText('wf-max', `${fmtN(scale, 1)} bps`);
+  setText('wf-verdict', edge > 0
+    ? `${fmtN(edge, 1)} bps survives the trip`
+    : `${fmtN(-edge, 1)} bps short of viable`);
+}
+
+function addTradeRow(t) {
+  const tbody = $('trades-body');
+  if (!tbody) return;
+  const empty = $('no-trades'); if (empty) empty.hidden = true;
+  const table = $('trades-table'); if (table) table.hidden = false;
+
+  const cls = t.signal === 'CREATE' ? 'create' : 'redeem';
+  const label = t.signal === 'CREATE' ? 'Create' : 'Redeem';
+  const time = String(t.timestamp).includes('T') ? String(t.timestamp).slice(11, 19) : hhmmss(t.timestamp);
+
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    `<td class="num mono">${time}</td>` +
+    `<td><span class="side ${cls}">${label}</span></td>` +
+    `<td class="num">${fmtN(t.spreadBps, 1)} bps</td>` +
+    `<td class="num" style="color:${t.pnl >= 0 ? 'var(--pos)' : 'var(--neg)'};font-weight:700">${fmtUsd(t.pnl, 2)}</td>`;
+  tbody.insertBefore(tr, tbody.firstChild);
+  while (tbody.children.length > 30) tbody.removeChild(tbody.lastChild);
+}
+
+function toast(signal, spreadBps, pnl) {
+  const host = $('toasts');
+  if (!host) return;
+  const el = document.createElement('div');
+  const cls = signal === 'CREATE' ? 'create' : 'redeem';
+  el.className = `toast ${cls}`;
+  el.innerHTML =
+    `<div class="h">${signal === 'CREATE' ? 'Create signal' : 'Redeem signal'}</div>` +
+    `<div class="b">${fmtN(spreadBps, 1)} bps clear of costs · <b>${fmtUsd(pnl, 2)}</b> on one basket</div>`;
+  host.appendChild(el);
+  setTimeout(() => {
+    el.classList.add('out');
+    setTimeout(() => el.remove(), 400);
+  }, 6200);
+  while (host.children.length > 3) host.firstChild.remove();
+}
+
+/* ── the main paint ──────────────────────────────────────────── */
+function renderSnapshot(s) {
+  const bps = Number(s.btcPerShare) || state.btcPerShare;
+  const source = s.btcPerShareSource || state.btcPerShareSource;
+  const ev = evaluate(s.arkbMid, s.btcPrice, bps);
+  const trigger = Number.isFinite(s.trigger) ? s.trigger : ev.triggerBps;
+  const cost = Number.isFinite(s.costBps) ? s.costBps : ev.costBps;
+  const prem = Number.isFinite(s.premBps) ? s.premBps : ev.premBps;
+  const signal = s.signal || ev.signal;
+  const mid = Number(s.arkbMid);
+  const nav = Number(ev.nav || s.nav);
+
+  /* hero */
+  animate($('basis-value'), prem, (v) => fmtSigned(v, 1));
+  const lde = $('hero-lede');
+  if (lde) lde.innerHTML = lede(prem, signal, trigger);
+
+  /* 60-second drift */
+  state.basisTrail.push({ t: Date.now(), v: prem });
+  while (state.basisTrail.length && Date.now() - state.basisTrail[0].t > 60000) state.basisTrail.shift();
+  const ref = state.basisTrail[0];
+  const drift = ref ? prem - ref.v : NaN;
+  const dEl = $('basis-delta');
+  if (dEl) {
+    const settled = Number.isFinite(drift) && state.basisTrail.length > 3;
+    dEl.className = `hero-delta ${settled && drift > 0.2 ? 'up' : settled && drift < -0.2 ? 'down' : ''}`;
+    dEl.querySelector('.arrow').textContent = settled ? (drift > 0.2 ? '▲' : drift < -0.2 ? '▼' : '•') : '•';
+    setText('basis-delta-text', settled
+      ? `${fmtSigned(drift, 1)} bps over the last minute`
+      : 'building the first minute');
+  }
+
+  const edge = Number.isFinite(prem) && Number.isFinite(cost) ? Math.abs(prem) - cost : NaN;
+  renderVerdict(signal, edge, trigger, prem);
+  renderMeter(prem, trigger);
+
+  setText('tag-trigger', Number.isFinite(trigger) ? `Trigger ±${fmtN(trigger, 1)} bps` : 'Trigger —');
+  setText('tag-cost', Number.isFinite(cost) ? `Cost ${fmtN(cost, 1)} bps` : 'Cost —');
+
+  const elapsedMin = state.backendLive && s.elapsed != null
+    ? Number(s.elapsed)
+    : (Date.now() - state.startTime) / 60000;
+  setText('tag-session', `Session ${fmtN(elapsedMin, 1)} min`);
+
+  /* stat rail */
+  const dir = (id, v) => {
+    const prev = state.lastPrices[id];
+    state.lastPrices[id] = v;
+    return Number.isFinite(prev) && Math.abs(v - prev) > 1e-9 ? Math.sign(v - prev) : 0;
+  };
+  flash($('arkb-mid'), dir('arkb', mid));
+  flash($('btc-price'), dir('btc', Number(s.btcPrice)));
+
+  animate($('arkb-mid'), mid, (v) => fmtUsd(v, 4));
+  animate($('arkb-bid'), Number(s.arkbBid), (v) => fmtUsd(v, 4));
+  animate($('arkb-ask'), Number(s.arkbAsk), (v) => fmtUsd(v, 4));
+  animate($('btc-price'), Number(s.btcPrice), (v) => fmtUsd(v, 0));
+  animate($('nav'), nav, (v) => fmtUsd(v, 4));
+  setText('btc-per-share', Number(bps).toFixed(8));
+  setText('nav-src', source === 'config' ? 'CONFIG' : source === 'default' ? 'DEFAULT' : 'ARK CSV');
+
+  const cu = CFG.etf.creationUnitShares;
+  const cuBtc = cu * bps;
+  const cuNotional = (mid > 0 ? mid : nav) * cu;
+  const cuDetail = `${fmtN(cuBtc, 4)} BTC · ${cu.toLocaleString()} shares`;
+  animate($('cu-value'), cuNotional, (v) => fmtCompact(v));
+  animate($('cu-value-card'), cuNotional, (v) => fmtUsd(v, 2));
+  setText('cu-shares', `${cu.toLocaleString()} sh`);
+  setText('cu-detail', cuDetail);
+  setText('cu-detail-card', cuDetail);
+  animate($('cost-total'), cost, (v) => `${fmtN(v, 2)} bps`);
+
+  /* session change badges — measured from the session open, not from
+     whatever happens to still be in the sparkline's 180-sample buffer */
+  sparks.arkb.push(mid);
+  sparks.btc.push(Number(s.btcPrice));
+  sparks.nav.push(nav);
+  sparks.cu.push(cuNotional);
+  const sessionChange = (key, v) => {
+    if (!Number.isFinite(v) || v <= 0) return NaN;
+    if (!Number.isFinite(state.open[key])) { state.open[key] = v; return 0; }
+    return ((v - state.open[key]) / state.open[key]) * 100;
+  };
+  const badge = (id, v) => {
+    const el = $(id);
+    if (!el) return;
+    el.textContent = Number.isFinite(v) ? `${fmtSigned(v, 2)}%` : '—';
+    el.className = `stat-badge ${v > 0 ? 'up' : v < 0 ? 'down' : ''}`;
+  };
+  badge('arkb-chg', sessionChange('arkb', mid));
+  badge('btc-chg', sessionChange('btc', Number(s.btcPrice)));
+
+  /* top strip */
+  setText('t-arkb', fmtUsd(mid, 2));
+  setText('t-nav', fmtUsd(nav, 2));
+  setText('t-btc', fmtUsd(Number(s.btcPrice), 0));
+  setText('t-basis', `${fmtSigned(prem, 1)} bps`);
+
+  /* ladder + waterfall */
+  renderLadder(Number(s.arkbBid), Number(s.arkbAsk), mid, nav);
+  renderWaterfall(mid, prem, cost);
+
+  /* p&l block */
+  const totalPnl = state.backendLive && s.totalPnl != null ? s.totalPnl : state.totalPnl;
+  const tradeCount = state.backendLive && s.tradeCount != null ? s.tradeCount : state.tradeCount;
+  const winRate = state.backendLive && s.winRate != null ? s.winRate : state.winRate;
+  const pnlEl = $('total-pnl');
+  if (pnlEl) {
+    pnlEl.className = `pnl num ${totalPnl > 0 ? 'up' : totalPnl < 0 ? 'down' : ''}`;
+    animate(pnlEl, totalPnl, (v) => fmtUsd(v, 2));
+  }
+  setText('pnl-stats', `${tradeCount} signal${tradeCount === 1 ? '' : 's'} · ${fmtN(winRate, 0)}% profitable`);
+
+  /* session analytics */
+  if (Number.isFinite(prem)) {
+    state.samples += 1;
+    state.high = Math.max(state.high, prem);
+    state.low = Math.min(state.low, prem);
+    const inZone = Number.isFinite(trigger) && Math.abs(prem) > trigger;
+    if (inZone) state.inZone += 1;
+    if (inZone && !state.wasInZone) state.crossings += 1;
+    state.wasInZone = inZone;
+    setText('s-high', `${fmtSigned(state.high, 1)} bps`);
+    setText('s-low', `${fmtSigned(state.low, 1)} bps`);
+    setText('s-inzone', `${fmtN((state.inZone / Math.max(1, state.samples)) * 100, 1)}%`);
+    setText('s-cross', String(state.crossings));
+  }
+
+  /* chart */
+  if (chart) {
+    chart.setTrigger(trigger);
+    chart.push(s.timestamp || Date.now(), prem);
+    const cv = chart.cv;
+    if (cv) {
+      cv.setAttribute('aria-label',
+        `Basis over time. Currently ${fmtSigned(prem, 1)} basis points against a trigger of plus or minus ${fmtN(trigger, 1)}. Session high ${fmtSigned(state.high, 1)}, low ${fmtSigned(state.low, 1)}.`);
+    }
+  }
+
+  /* a monitor is often a background tab — put the number in the title */
+  const glyph = signal === 'CREATE' ? '▲' : signal === 'REDEEM' ? '▼' : '·';
+  const nextTitle = `${glyph} ${fmtSigned(prem, 1)} bps · ARKB`;
+  if (document.title !== nextTitle) document.title = nextTitle;
+
+  state.lastTickAt = Date.now();
+  if (document.body.dataset.stale === '1') document.body.dataset.stale = '0';
+}
+
+/* ══════════════════════════════════════════════════════════════
+   DATA — backend socket, with a standalone fallback
+   ══════════════════════════════════════════════════════════════ */
 async function loadConfig() {
-  const urls = ['/api/config', 'config.json', './config.json'];
-  for (const url of urls) {
+  for (const url of ['/api/config', 'config.json', './config.json']) {
     try {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) continue;
@@ -95,9 +1047,7 @@ async function loadConfig() {
       state.btcPerShare = Number(CFG.etf.btcPerShare) || state.btcPerShare;
       state.btcPerShareSource = 'config';
       return true;
-    } catch {
-      // try next source
-    }
+    } catch { /* try next */ }
   }
   return false;
 }
@@ -108,16 +1058,14 @@ async function fetchBtcPrice() {
   if (!res.ok) throw new Error(`BTC fetch failed: ${res.status}`);
   const data = await res.json();
   const price = Number(data.price);
-  if (!Number.isFinite(price) || price <= 0) throw new Error('Invalid BTC price payload');
+  if (!Number.isFinite(price) || price <= 0) throw new Error('Invalid BTC price');
   return price;
 }
 
 function nextStandaloneSnapshot(btcPrice) {
   const bps = state.btcPerShare;
   const nav = btcPrice * bps;
-  let bid;
-  let ask;
-  let mid;
+  let bid; let ask; let mid;
 
   if (liveArkb && (liveArkb.last != null || (liveArkb.bid != null && liveArkb.ask != null))) {
     bid = Number(liveArkb.bid);
@@ -129,11 +1077,11 @@ function nextStandaloneSnapshot(btcPrice) {
   } else {
     state.basisBps += (Math.random() - 0.5) * 1.4;
     state.basisBps *= 0.985;
-    state.basisBps = Math.max(-60, Math.min(60, state.basisBps));
+    state.basisBps = clamp(state.basisBps, -60, 60);
     mid = nav * (1 + state.basisBps / 10000);
-    const halfSpread = mid * 0.00015;
-    bid = mid - halfSpread;
-    ask = mid + halfSpread;
+    const half = mid * 0.00015;
+    bid = mid - half;
+    ask = mid + half;
   }
 
   const ev = evaluate(mid, btcPrice, bps);
@@ -156,10 +1104,7 @@ function nextStandaloneSnapshot(btcPrice) {
 function registerTradeFromEval(snapshot, ev) {
   const now = Date.now();
   const cooldown = Number(CFG.signals.cooldownMs) || 15000;
-  if (!ev || ev.signal === 'NEUTRAL') {
-    state.lastSignal = 'NEUTRAL';
-    return;
-  }
+  if (!ev || ev.signal === 'NEUTRAL') { state.lastSignal = 'NEUTRAL'; return; }
   if (ev.signal === state.lastSignal && now - state.lastSignalAt < cooldown) return;
   if (!(ev.spreadCapturedBps > 0)) return;
 
@@ -170,237 +1115,31 @@ function registerTradeFromEval(snapshot, ev) {
     pnl: ev.pnlUsd,
   };
   state.trades.unshift(trade);
-  state.trades = state.trades.slice(0, 25);
+  state.trades = state.trades.slice(0, 30);
   state.tradeCount += 1;
   state.totalPnl += trade.pnl;
   const wins = state.trades.filter((t) => t.pnl > 0).length;
-  state.winRate = state.trades.length > 0 ? (wins / state.trades.length) * 100 : 0;
+  state.winRate = state.trades.length ? (wins / state.trades.length) * 100 : 0;
   state.lastSignalAt = now;
   state.lastSignal = ev.signal;
   addTradeRow(trade);
-}
-
-function renderSnapshot(s) {
-  const bps = Number(s.btcPerShare) || state.btcPerShare;
-  const source = s.btcPerShareSource || state.btcPerShareSource;
-  const ev = evaluate(s.arkbMid, s.btcPrice, bps);
-  const trigger = Number.isFinite(s.trigger) ? s.trigger : ev.triggerBps;
-  const cost = Number.isFinite(s.costBps) ? s.costBps : ev.costBps;
-
-  $('arkb-mid').textContent = `$${fmtN(s.arkbMid, 4)}`;
-  $('arkb-bid').textContent = `$${fmtN(s.arkbBid, 4)}`;
-  $('arkb-ask').textContent = `$${fmtN(s.arkbAsk, 4)}`;
-  $('btc-price').textContent = `$${fmtN(s.btcPrice, 2)}`;
-  $('nav').textContent = `$${fmtN(ev.nav || s.nav, 4)}`;
-  $('btc-per-share').textContent = Number(bps).toFixed(8);
-  $('btc-per-share-source').textContent = source ? `(${source})` : '';
-
-  const prem = Number.isFinite(s.premBps) ? s.premBps : ev.premBps;
-  const sign = prem >= 0 ? '+' : '';
-  const premEl = $('prem-bps');
-  premEl.textContent = `${sign}${fmtN(prem, 1)} bps`;
-  premEl.className = `big-number ${prem >= 0 ? 'prem-positive' : 'prem-negative'}`;
-  $('trigger-label').textContent = Number.isFinite(trigger) ? `±${fmtN(trigger, 1)} bps` : '—';
-
-  const signal = s.signal || ev.signal;
-  const sigEl = $('signal');
-  sigEl.className = `signal signal-${String(signal).toLowerCase()}`;
-  if (signal === 'CREATE') sigEl.textContent = '🟢 CREATE SIGNAL';
-  else if (signal === 'REDEEM') sigEl.textContent = '🔴 REDEEM SIGNAL';
-  else sigEl.textContent = '⚪ NEUTRAL — Watching...';
-
-  const spreadAfterCosts = Number.isFinite(prem) && Number.isFinite(cost) ? Math.abs(prem) - cost : NaN;
-  $('signal-spread').textContent = `Spread after costs: ${fmtN(spreadAfterCosts, 1)} bps`;
-  $('cost-total').textContent = `${fmtN(cost, 2)} bps`;
-
-  const cu = CFG.etf.creationUnitShares;
-  const cuBtc = cu * bps;
-  const cuNotional = (Number(s.arkbMid) > 0 ? s.arkbMid : (ev.nav || 0)) * cu;
-  $('cu-value').textContent = `$${fmtN(cuNotional, 2)}`;
-  $('cu-detail').textContent = `${cu.toLocaleString()} shares  |  ${fmtN(cuBtc, 6)} BTC`;
-
-  const totalPnl = state.backendLive && s.totalPnl != null ? s.totalPnl : state.totalPnl;
-  const tradeCount = state.backendLive && s.tradeCount != null ? s.tradeCount : state.tradeCount;
-  const winRate = state.backendLive && s.winRate != null ? s.winRate : state.winRate;
-  const pnlEl = $('total-pnl');
-  pnlEl.textContent = `$${fmtN(totalPnl, 2)}`;
-  pnlEl.className = `big-number ${totalPnl >= 0 ? 'prem-positive' : 'prem-negative'}`;
-  $('pnl-stats').textContent = `Trades: ${tradeCount}  |  Win: ${fmtN(winRate, 1)}%`;
-
-  const elapsedMin = state.backendLive && s.elapsed != null
-    ? s.elapsed
-    : ((Date.now() - state.startTime) / 60000).toFixed(1);
-  $('session-time').textContent = elapsedMin;
-
-  const t = new Date(s.timestamp || Date.now());
-  chart.data.datasets[0].data.push({ x: t, y: prem });
-  if (chart.data.datasets[0].data.length > 600) chart.data.datasets[0].data.shift();
-  if (Number.isFinite(trigger)) {
-    const x0 = chart.data.datasets[0].data[0]?.x || t;
-    chart.data.datasets[1].data = [{ x: x0, y: trigger }, { x: t, y: trigger }];
-    chart.data.datasets[2].data = [{ x: x0, y: -trigger }, { x: t, y: -trigger }];
-  }
-  chart.update('none');
-
-  $('clock').textContent = `Updated ${new Date().toLocaleTimeString()}`;
-  $('session-elapsed').textContent = `Session: ${elapsedMin} min`;
-}
-
-function addTradeRow(t) {
-  $('no-trades').style.display = 'none';
-  const tbody = $('trades-body');
-  const tr = document.createElement('tr');
-  const cls = t.signal === 'CREATE' ? 'create' : 'redeem';
-  const icon = t.signal === 'CREATE' ? '🟢' : '🔴';
-  const time = String(t.timestamp).includes('T')
-    ? t.timestamp.slice(11, 19)
-    : new Date(t.timestamp).toLocaleTimeString();
-  tr.innerHTML = `
-    <td>${time}</td>
-    <td class="${cls}">${icon} ${t.signal}</td>
-    <td>${fmtN(t.spreadBps, 1)} bps</td>
-    <td>$${fmtN(t.pnl, 2)}</td>
-  `;
-  tbody.insertBefore(tr, tbody.firstChild);
-  while (tbody.children.length > 25) tbody.removeChild(tbody.lastChild);
-}
-
-function setCostModel() {
-  $('cost-fee').textContent = `$${CFG.costs.creationRedemptionFeeUsd} flat`;
-  $('cost-comm').textContent = `$${CFG.costs.etfCommissionPerShare}/share`;
-  $('cost-btc').textContent = `${CFG.costs.btcExecutionBps} bps`;
-  $('cost-impact').textContent = `${CFG.costs.marketImpactBps * 2} bps`;
-  $('cost-spread').textContent = `${CFG.costs.btcSpotSpreadBps} bps`;
-}
-
-async function loadMarketOverview() {
-  const url = CFG.marketOverviewUrl;
-  if (!url) {
-    $('market-overview').innerHTML = '<div style="color:var(--caption);text-align:center">No market overview URL configured</div>';
-    return;
-  }
-  try {
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`Market overview fetch failed: ${res.status}`);
-    const json = await res.json();
-    const arkbEntries = Object.entries(json.market_data || {}).filter(([sym]) => sym.toUpperCase() === 'ARKB');
-    if (arkbEntries.length > 0) liveArkb = arkbEntries[0][1];
-
-    const rows = arkbEntries.length > 0
-      ? arkbEntries.map(([sym, d]) => {
-        const change = d.change_pct != null
-          ? `<span style="color:${d.change_pct >= 0 ? '#4F9A6E' : '#B8555F'}">${d.change_pct > 0 ? '+' : ''}${d.change_pct}%</span>`
-          : '—';
-        return `<tr>
-          <td><b>${sym}</b></td>
-          <td>${d.last != null ? `$${Number(d.last).toLocaleString()}` : '—'}</td>
-          <td>${d.bid != null ? `$${Number(d.bid).toLocaleString()}` : '—'}</td>
-          <td>${d.ask != null ? `$${Number(d.ask).toLocaleString()}` : '—'}</td>
-          <td>${d.spread_bps != null ? `${d.spread_bps} bps` : '—'}</td>
-          <td>${change}</td>
-        </tr>`;
-      }).join('')
-      : '<tr><td colspan="6" style="color:var(--caption);text-align:center">No ARKB data</td></tr>';
-
-    $('market-overview').innerHTML = `
-      <table>
-        <thead><tr><th>Symbol</th><th>Last</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Change</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <small style="display:block;margin-top:8px;color:var(--caption)">Updated: ${json.timestamp || new Date().toISOString()}</small>
-    `;
-  } catch {
-    $('market-overview').innerHTML = '<div style="color:#B8555F;text-align:center">Failed to load market overview</div>';
-  }
-}
-
-const ctx = $('premChart').getContext('2d');
-const chart = new Chart(ctx, {
-  type: 'line',
-  data: {
-    datasets: [
-      {
-        label: 'Premium/Discount (bps)',
-        data: [],
-        borderColor: '#6F86FF',
-        backgroundColor: '#7059FB18',
-        borderWidth: 1.5,
-        pointRadius: 0,
-        tension: 0.3,
-        fill: true,
-      },
-      {
-        label: '+trigger',
-        data: [],
-        borderColor: '#BFA05488',
-        borderWidth: 1,
-        borderDash: [4, 4],
-        pointRadius: 0,
-        fill: false,
-      },
-      {
-        label: '-trigger',
-        data: [],
-        borderColor: '#BFA05488',
-        borderWidth: 1,
-        borderDash: [4, 4],
-        pointRadius: 0,
-        fill: false,
-      },
-    ],
-  },
-  options: {
-    responsive: true,
-    animation: false,
-    interaction: { mode: 'index', intersect: false },
-    scales: {
-      x: { type: 'time', display: false },
-      y: {
-        grid: { color: '#7DA5FF20' },
-        ticks: { color: '#7F94BA', callback: (v) => `${v.toFixed(1)} bps` },
-      },
-    },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        backgroundColor: 'rgba(17,29,59,0.92)',
-        titleColor: '#B8C8E6',
-        bodyColor: '#9AB0D4',
-        borderColor: '#7DA5FF55',
-        borderWidth: 1,
-      },
-    },
-  },
-});
-
-function setModeBadge(text, cls) {
-  $('mode-badge').textContent = text;
-  $('mode-badge').className = `mode ${cls}`;
+  // backend mode announces via the 'trade' socket event instead —
+  // these two paths never run at the same time, so no double toast
+  toast(trade.signal, trade.spreadBps, trade.pnl);
 }
 
 async function standaloneTick() {
   try {
     const btc = await fetchBtcPrice();
     const snapshot = nextStandaloneSnapshot(btc);
-    state.btcPrice = snapshot.btcPrice;
-    state.arkbMid = snapshot.arkbMid;
-    state.arkbBid = snapshot.arkbBid;
-    state.arkbAsk = snapshot.arkbAsk;
-    state.nav = snapshot.nav;
-    state.premBps = snapshot.premBps;
-    state.signal = snapshot.signal;
-
     const ev = evaluate(snapshot.arkbMid, snapshot.btcPrice, state.btcPerShare);
     registerTradeFromEval(snapshot, ev);
     renderSnapshot(snapshot);
-
-    setModeBadge(liveArkb ? 'LIVE' : 'LIVE+SIM ARKB', 'mode-live');
-    $('conn-status').className = 'connected';
-    $('conn-text').textContent = liveArkb ? 'Live (BTC + ARKB)' : 'Live BTC / sim ARKB';
+    setText('mode-chip', liveArkb ? 'Live quotes' : 'Live BTC · modelled ARKB');
+    setStatus('live', liveArkb ? 'Live' : 'Partial');
   } catch {
-    setModeBadge('DATA ERROR', 'mode-dry');
-    $('conn-status').className = '';
-    $('conn-text').textContent = 'Data Error';
+    setStatus('err', 'No data');
+    setText('mode-chip', 'Offline');
   }
 }
 
@@ -414,9 +1153,13 @@ function applyBackendSnapshot(s) {
   if (typeof s.tradeCount === 'number') state.tradeCount = s.tradeCount;
   if (typeof s.winRate === 'number') state.winRate = s.winRate;
   renderSnapshot(s);
-  setModeBadge(s.dryRun ? 'BACKEND DRY-RUN' : 'BACKEND LIVE', s.dryRun ? 'mode-dry' : 'mode-backend');
-  $('conn-status').className = 'connected';
-  $('conn-text').textContent = s.dryRun ? 'Socket connected (dry-run)' : 'Socket connected';
+  setText('mode-chip', s.dryRun ? 'Simulation' : 'Live backend');
+  setStatus('live', s.dryRun ? 'Simulated' : 'Connected');
+  // in dry run the modelled price comes off a fictional bitcoin level, so the
+  // real quote below will not line up. Say so rather than let it read as an error.
+  setText('market-sub', s.dryRun
+    ? 'Real quote. Prices above are simulated, so the two will not agree — that is expected in dry run.'
+    : 'Independent quote used to sanity-check the model.');
 }
 
 function startBackendMode() {
@@ -427,30 +1170,29 @@ function startBackendMode() {
   socket.on('connect', () => {
     connected = true;
     state.mode = 'backend';
-    if (standaloneTimer) {
-      clearInterval(standaloneTimer);
-      standaloneTimer = null;
-    }
-    $('conn-status').className = 'connected';
-    $('conn-text').textContent = 'Socket connected';
+    if (standaloneTimer) { clearInterval(standaloneTimer); standaloneTimer = null; }
+    setStatus('live', 'Connected');
   });
-
-  socket.on('snapshot', (s) => applyBackendSnapshot(s));
-  socket.on('trade', (t) => addTradeRow(t));
+  socket.on('snapshot', applyBackendSnapshot);
+  socket.on('history', (rows) => { if (chart) chart.seed(rows); });
+  socket.on('trade', (t) => {
+    addTradeRow(t);
+    toast(t.signal, t.spreadBps, t.pnl);
+  });
   socket.on('trades', (trades) => {
     if (!Array.isArray(trades)) return;
     const tbody = $('trades-body');
+    if (!tbody) return;
     tbody.innerHTML = '';
-    if (trades.length === 0) {
-      $('no-trades').style.display = 'block';
+    if (!trades.length) {
+      const empty = $('no-trades'); if (empty) empty.hidden = false;
+      const table = $('trades-table'); if (table) table.hidden = true;
       return;
     }
-    $('no-trades').style.display = 'none';
     trades.slice().reverse().forEach(addTradeRow);
   });
   socket.on('disconnect', () => {
-    $('conn-status').className = '';
-    $('conn-text').textContent = 'Disconnected — falling back';
+    setStatus('warn', 'Reconnecting');
     if (!standaloneTimer) {
       standaloneTimer = setInterval(standaloneTick, 5000);
       standaloneTick();
@@ -467,21 +1209,166 @@ function startBackendMode() {
   return true;
 }
 
+/* ── external market feed ────────────────────────────────────── */
+async function loadMarketOverview() {
+  const host = $('market-overview');
+  if (!host) return;
+  const url = CFG.marketOverviewUrl;
+  if (!url) {
+    host.innerHTML = '<div class="empty" style="padding:28px"><span>No market feed configured.</span></div>';
+    return;
+  }
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const json = await res.json();
+    const entries = Object.entries(json.market_data || {}).filter(([s]) => s.toUpperCase() === 'ARKB');
+    if (entries.length) [, liveArkb] = entries[0];
+
+    if (!entries.length) {
+      host.innerHTML = '<div class="empty" style="padding:28px"><span>No ARKB quote on the feed right now.</span></div>';
+      setText('market-updated', '—');
+      return;
+    }
+
+    const rows = entries.map(([sym, d]) => {
+      const chgVal = Number(d.change_pct);
+      const chg = Number.isFinite(chgVal)
+        ? `<span style="color:${chgVal >= 0 ? 'var(--pos)' : 'var(--neg)'};font-weight:700">${fmtSigned(chgVal, 2)}%</span>`
+        : '—';
+      const cell = (v, d2 = 2) => (v != null && Number.isFinite(Number(v)) ? fmtUsd(v, d2) : '—');
+      return `<tr>
+        <td style="color:var(--ink);font-weight:700">${sym}</td>
+        <td class="num">${cell(d.last)}</td>
+        <td class="num">${cell(d.bid)}</td>
+        <td class="num">${cell(d.ask)}</td>
+        <td class="num">${d.spread_bps != null ? `${fmtN(d.spread_bps, 1)} bps` : '—'}</td>
+        <td class="num">${chg}</td>
+      </tr>`;
+    }).join('');
+
+    host.innerHTML = `<table class="data">
+      <thead><tr><th>Symbol</th><th>Last</th><th>Bid</th><th>Ask</th><th>Spread</th><th>Day</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+    setText('market-updated', json.timestamp ? String(json.timestamp) : hhmmss(Date.now()));
+  } catch {
+    host.innerHTML = '<div class="empty" style="padding:28px"><span>Market feed unavailable.</span></div>';
+    setText('market-updated', 'offline');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   INTERACTION
+   ══════════════════════════════════════════════════════════════ */
+function refreshNow() {
+  const btn = $('refresh-btn');
+  if (btn) {
+    btn.classList.remove('spin');
+    void btn.offsetWidth;
+    btn.classList.add('spin');
+  }
+  if (state.mode === 'backend' && state.backendLive) {
+    fetch('/api/state').then((r) => r.json()).then(applyBackendSnapshot).catch(standaloneTick);
+  } else {
+    standaloneTick();
+  }
+  loadMarketOverview();
+}
+
+function setRange(btn) {
+  if (!btn) return;
+  document.querySelectorAll('#range-seg button').forEach((b) => b.classList.toggle('on', b === btn));
+  if (chart) chart.setRange(Number(btn.dataset.range));
+}
+
+function bindUI() {
+  $('theme-btn')?.addEventListener('click', toggleTheme);
+  $('refresh-btn')?.addEventListener('click', refreshNow);
+
+  const sheet = $('help-sheet');
+  let restoreFocus = null;
+  const openHelp = () => {
+    if (!sheet || !sheet.hidden) return;
+    restoreFocus = document.activeElement;
+    sheet.hidden = false;
+    $('help-close')?.focus();
+  };
+  const closeHelp = () => {
+    if (!sheet || sheet.hidden) return;
+    sheet.hidden = true;
+    if (restoreFocus?.focus) restoreFocus.focus();
+    restoreFocus = null;
+  };
+  $('help-btn')?.addEventListener('click', openHelp);
+  $('help-close')?.addEventListener('click', closeHelp);
+  sheet?.addEventListener('click', (e) => { if (e.target === sheet) closeHelp(); });
+  // the sheet is modal: keep Tab inside it
+  sheet?.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') { e.preventDefault(); $('help-close')?.focus(); }
+  });
+
+  document.querySelectorAll('#range-seg button').forEach((b) => {
+    b.addEventListener('click', () => setRange(b));
+  });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const tag = document.activeElement?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    const k = e.key.toLowerCase();
+    if (k === 't') toggleTheme();
+    else if (k === 'r') refreshNow();
+    else if (k === '?' || (e.key === '/' && e.shiftKey)) openHelp();
+    else if (e.key === 'Escape') closeHelp();
+    else if (['1', '2', '3', '4'].includes(e.key)) {
+      setRange(document.querySelectorAll('#range-seg button')[Number(e.key) - 1]);
+    }
+  });
+
+  window.addEventListener('resize', () => {
+    remeasureAll();
+    Object.values(sparks).forEach((s) => { s.dirty = true; });
+  });
+}
+
+/* Data that has stopped arriving must stop looking authoritative. */
+function watchFreshness() {
+  setInterval(() => {
+    if (!state.lastTickAt) return;
+    const age = (Date.now() - state.lastTickAt) / 1000;
+    if (age > 10) {
+      document.body.dataset.stale = '1';
+      setStatus('warn', `Stale ${Math.round(age)}s`);
+    }
+  }, 1000);
+}
+
+/* ══════════════════════════════════════════════════════════════
+   BOOT
+   ══════════════════════════════════════════════════════════════ */
 async function boot() {
+  initTheme();
+  bindUI();
+
+  chart = new GapChart($('gap-canvas'));
+  sparks.arkb = new Spark($('spark-arkb'));
+  sparks.btc = new Spark($('spark-btc'));
+  sparks.nav = new Spark($('spark-nav'), 'neu');
+  sparks.cu = new Spark($('spark-cu'), 'neu');
+  setInterval(() => Object.values(sparks).forEach((s) => s.draw()), 900);
+  startSizeWatch();
+
+  // entrance animations are decoration; never let them gate the content
+  setTimeout(() => document.querySelectorAll('.rise').forEach((el) => el.classList.add('shown')), 1400);
+  watchFreshness();
+
+  const mq = window.matchMedia('(prefers-color-scheme: light)');
+  mq.addEventListener?.('change', () => { PAL = null; });
+
   await loadConfig();
-  setCostModel();
   startBackendMode();
   loadMarketOverview();
-  setInterval(loadMarketOverview, 5000);
-
-  $('refresh-btn').addEventListener('click', () => {
-    if (state.mode === 'backend' && state.backendLive) {
-      fetch('/api/state').then((r) => r.json()).then(applyBackendSnapshot).catch(() => standaloneTick());
-    } else {
-      standaloneTick();
-    }
-    loadMarketOverview();
-  });
+  setInterval(loadMarketOverview, 8000);
 }
 
 boot();
