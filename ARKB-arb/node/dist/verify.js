@@ -61,7 +61,7 @@ async function main() {
 
   const tradeLogPath = path.join(__dirname, 'dist', 'trades.csv');
   const child = spawn(process.execPath, [appPath, '--dry-run', '--port', String(port)], {
-    cwd: path.join(__dirname, 'dist'),
+    cwd: __dirname,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, DISCORD_TOKEN: '' },
   });
