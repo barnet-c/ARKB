@@ -77,27 +77,10 @@ function flash(el, dir) {
   el.classList.add(dir > 0 ? 'flash-up' : 'flash-dn');
 }
 
-/* ── theme ───────────────────────────────────────────────────── */
-const SUN = 'M12 17.5a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11M12 1.8v2.4M12 19.8v2.4M4.2 4.2l1.7 1.7M18.1 18.1l1.7 1.7M1.8 12h2.4M19.8 12h2.4M4.2 19.8l1.7-1.7M18.1 5.9l1.7-1.7';
-const MOON = 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z';
+/* ── palette ─────────────────────────────────────────────────────
+   Single obsidian theme. Canvas work can't read CSS custom properties
+   directly, so the tokens are resolved once from :root and cached. */
 let PAL = null;
-
-function applyTheme(name) {
-  document.documentElement.setAttribute('data-theme', name);
-  const icon = $('theme-icon');
-  if (icon) icon.setAttribute('d', name === 'dark' ? MOON : SUN);
-  try { localStorage.setItem('arkb-theme', name); } catch { /* private mode */ }
-  PAL = null;
-}
-function initTheme() {
-  let saved = null;
-  try { saved = localStorage.getItem('arkb-theme'); } catch { /* ignore */ }
-  const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
-  applyTheme(saved || (prefersLight ? 'light' : 'dark'));
-}
-function toggleTheme() {
-  applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
-}
 
 function palette() {
   if (PAL) return PAL;
@@ -779,22 +762,45 @@ function renderLadder(bid, ask, mid, nav) {
   const TOP = 16; const USABLE = 236;
   const pos = (v) => TOP + ((hi - v) / (hi - lo)) * USABLE;
 
-  const place = (id, v) => {
-    const el = $(id);
-    if (!el) return pos(v);
-    const p = pos(v);
-    el.style.top = `${p}px`;
-    // the knob glides via a CSS transition — the label has to travel with it,
-    // and it must land on the same figure the stat rail is easing toward
-    const px = el.querySelector('.px');
-    if (px) animate(px, v, (x) => fmtUsd(x, 4));
-    return p;
-  };
+  const nodes = [
+    { id: 'n-ask', v: ask },
+    { id: 'n-mid', v: mid },
+    { id: 'n-nav', v: nav },
+    { id: 'n-bid', v: bid },
+  ].map((nd) => ({ ...nd, p: pos(nd.v) }));
 
-  place('n-ask', ask);
-  place('n-bid', bid);
-  const pm = place('n-mid', mid);
-  const pn = place('n-nav', nav);
+  /* Bid, ask, mid and NAV routinely sit within a cent of each other, which
+     stacks their labels on top of one another. Push only the LABELS apart —
+     the knob and its leader line stay at the true price, so the picture
+     never lies about where a level actually is. */
+  const MIN_GAP = 19;
+  const ordered = [...nodes].sort((a, b) => a.p - b.p);
+  let last = -Infinity;
+  for (const nd of ordered) {
+    nd.label = Math.max(nd.p, last + MIN_GAP);
+    last = nd.label;
+  }
+  const overflow = last - (TOP + USABLE);
+  if (overflow > 0) for (const nd of ordered) nd.label -= overflow;
+
+  for (const nd of nodes) {
+    const el = $(nd.id);
+    if (!el) continue;
+    el.style.top = `${nd.p}px`;
+    const off = nd.label - nd.p;
+    const tag = el.querySelector('.tag-l');
+    if (tag) tag.style.transform = `translateY(${off}px)`;
+    // the label glides with the knob, and must land on the same figure the
+    // stat rail is easing toward
+    const px = el.querySelector('.px');
+    if (px) {
+      px.style.transform = `translateY(calc(-50% + ${off}px))`;
+      animate(px, nd.v, (x) => fmtUsd(x, 4));
+    }
+  }
+
+  const pm = nodes.find((nd) => nd.id === 'n-mid').p;
+  const pn = nodes.find((nd) => nd.id === 'n-nav').p;
 
   const band = $('gap-band');
   if (band) {
@@ -805,7 +811,9 @@ function renderLadder(bid, ask, mid, nav) {
     band.style.opacity = height > 4 ? '1' : '0.35';
     const diff = mid - nav;
     const bps = nav > 0 ? (diff / nav) * 10000 : NaN;
-    setText('gap-band-label', `${fmtSigned(diff, 4)} · ${fmtSigned(bps, 1)} bps`);
+    // lives in the card header, not inside the band — when mid and NAV are a
+    // cent apart the band is too thin to hold a caption without colliding
+    setText('gap-chip', `${fmtSigned(diff, 4)} · ${fmtSigned(bps, 1)} bps`);
   }
 }
 
@@ -1335,7 +1343,6 @@ function setRange(btn) {
 }
 
 function bindUI() {
-  $('theme-btn')?.addEventListener('click', toggleTheme);
   $('refresh-btn')?.addEventListener('click', refreshNow);
 
   const sheet = $('help-sheet');
@@ -1369,8 +1376,7 @@ function bindUI() {
     const tag = document.activeElement?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     const k = e.key.toLowerCase();
-    if (k === 't') toggleTheme();
-    else if (k === 'r') refreshNow();
+    if (k === 'r') refreshNow();
     else if (k === '?' || (e.key === '/' && e.shiftKey)) openHelp();
     else if (e.key === 'Escape') closeHelp();
     else if (['1', '2', '3', '4'].includes(e.key)) {
@@ -1500,7 +1506,6 @@ function watchFreshness() {
    BOOT
    ══════════════════════════════════════════════════════════════ */
 async function boot() {
-  initTheme();
   bindUI();
 
   chart = new GapChart($('gap-canvas'));
@@ -1514,9 +1519,6 @@ async function boot() {
   // entrance animations are decoration; never let them gate the content
   setTimeout(() => document.querySelectorAll('.rise').forEach((el) => el.classList.add('shown')), 1400);
   watchFreshness();
-
-  const mq = window.matchMedia('(prefers-color-scheme: light)');
-  mq.addEventListener?.('change', () => { PAL = null; });
 
   await loadConfig();
   bindSizing();          // after loadConfig so the fee field shows the real default
