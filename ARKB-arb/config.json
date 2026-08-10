@@ -1,6 +1,5 @@
 {
   "_comment": "ARKB ETF Arbitrage Simulation Configuration",
-
   "etf": {
     "ticker": "ARKB",
     "name": "ARK 21Shares Bitcoin ETF",
@@ -11,7 +10,6 @@
     "custodian": "Coinbase Custody",
     "sponsor": "ARK Investment Management / 21Shares"
   },
-
   "market": {
     "btc_spot_price_usd": 85000.00,
     "trading_days": 1,
@@ -20,24 +18,22 @@
     "initial_premium_bps": 0.0,
     "market_noise_vol_bps": 8.0
   },
-
   "arbitrage": {
     "ap_trigger_threshold_bps": 10.0,
-    "ap_transaction_cost_bps": 6.0,
+    "ap_transaction_cost_bps": 8.0,
     "ap_execution_delay_minutes": 15,
     "max_creation_units_per_trade": 3,
     "convergence_speed": 0.7,
     "num_aps": 4
   },
-
   "costs": {
-    "_wire_fee_note": "NOT PUBLICLY DISCLOSED. Exhibit E of AP Agreement is a private commercial term, blank in all EDGAR filings. Best estimate based on cash-creation model: $100-$300. See PARAMETERS.md.",
-    "btc_trading_spread_bps": 1.0,
+    "_wire_fee_note": "NOT PUBLICLY DISCLOSED. Per-order fee (not per basket). Best estimate $100-$300. See PARAMETERS.md.",
+    "btc_trading_spread_bps": 2.0,
     "etf_trading_spread_bps": 2.0,
     "wire_fee_usd": 200,
+    "wire_fee_per_order": true,
     "custodian_fee_bps_annual": 5.0
   },
-
   "simulation": {
     "random_seed": 42,
     "output_dir": "results"

@@ -55,6 +55,8 @@ node dashboard.js --port 8080
 npm run analyze
 npm run monitor      # dry run
 npm run dashboard    # dry run
+npm test             # unit tests
+npm run test:all     # tests + build + smoke verify
 ```
 
 ## Discord Alerts
@@ -67,6 +69,11 @@ DISCORD_GUILD_ID=your_guild_id
 ```
 
 The bot will create/find a `#arkb-arb-alerts` channel and post embeds on CREATE/REDEEM signals.
+
+## Critical correctness note
+
+**Do not derive tcPerShare from live ARKB mid / BTC spot.** That forces NAV ~ mid and zeros premium/discount.
+This codebase resolves BTC/share from config + ARK holdings CSV only.
 
 ## How It Works
 

@@ -50,8 +50,8 @@ class SimConfig:
     # ETF
     ticker: str = "ARKB"
     shares_outstanding: int = 75_000_000
-    creation_unit_size: int = 50_000
-    btc_per_share: float = 0.001050
+    creation_unit_size: int = 5_000
+    btc_per_share: float = 0.000303
     management_fee_bps: float = 21.0
 
     # Market
@@ -63,16 +63,17 @@ class SimConfig:
 
     # Arbitrage
     ap_trigger_threshold_bps: float = 10.0
-    ap_transaction_cost_bps: float = 6.0
+    ap_transaction_cost_bps: float = 8.0
     ap_execution_delay_minutes: int = 15
     max_creation_units_per_trade: int = 3
     convergence_speed: float = 0.7
     num_aps: int = 4
 
     # Costs
-    btc_trading_spread_bps: float = 1.0
+    btc_trading_spread_bps: float = 2.0
     etf_trading_spread_bps: float = 2.0
-    wire_fee_usd: float = 250.0
+    wire_fee_usd: float = 200.0
+    wire_fee_per_order: bool = True
 
     # Sim
     random_seed: int = 42
@@ -111,10 +112,30 @@ class SimConfig:
         c.btc_trading_spread_bps = costs.get("btc_trading_spread_bps", c.btc_trading_spread_bps)
         c.etf_trading_spread_bps = costs.get("etf_trading_spread_bps", c.etf_trading_spread_bps)
         c.wire_fee_usd = costs.get("wire_fee_usd", c.wire_fee_usd)
+        c.wire_fee_per_order = bool(costs.get("wire_fee_per_order", getattr(c, "wire_fee_per_order", True)))
 
         c.random_seed = sim.get("random_seed", c.random_seed)
         c.output_dir = sim.get("output_dir", c.output_dir)
+        c.validate()
         return c
+
+    def validate(self) -> None:
+        if self.creation_unit_size <= 0:
+            raise ValueError("creation_unit_size must be > 0")
+        if self.btc_per_share <= 0:
+            raise ValueError("btc_per_share must be > 0")
+        if self.btc_spot_price_usd <= 0:
+            raise ValueError("btc_spot_price_usd must be > 0")
+        if self.trading_days <= 0:
+            raise ValueError("trading_days must be > 0")
+        if self.minutes_per_day <= 0:
+            raise ValueError("minutes_per_day must be > 0")
+        if self.num_aps <= 0:
+            raise ValueError("num_aps must be > 0")
+        if not (0 < self.convergence_speed <= 1):
+            raise ValueError("convergence_speed must be in (0, 1]")
+        if self.shares_outstanding < self.creation_unit_size:
+            raise ValueError("shares_outstanding must cover at least one creation unit")
 
 
 @dataclass
@@ -172,6 +193,7 @@ class ARKBSimulation:
         self.arb_events: List[ArbEvent] = []
         self.cumulative_ap_pnl = 0.0
         self.total_arb_events = 0
+        self.elapsed_minutes = 0
 
     def _randn(self) -> float:
         """Box-Muller normal sample."""
@@ -189,12 +211,13 @@ class ARKBSimulation:
                 return u * mul
 
     def nav_per_share(self) -> float:
-        """Intraday indicative NAV per share."""
+        """Intraday indicative NAV per share with accrued sponsor fee."""
         gross = self.btc_price * self.cfg.btc_per_share
-        # Subtract accrued management fee (annual fee / minutes per year)
+        # Accrue management fee over elapsed simulation minutes
         minutes_per_year = 252 * 390
-        fee_per_minute = (self.cfg.management_fee_bps / 10_000) / minutes_per_year
-        return gross * (1 - fee_per_minute)
+        fee_frac = (self.cfg.management_fee_bps / 10_000) * (self.elapsed_minutes / minutes_per_year)
+        fee_frac = min(fee_frac, 0.05)  # safety cap
+        return gross * (1.0 - fee_frac)
 
     def market_price(self) -> float:
         """Market price = NAV * (1 + premium)."""
@@ -260,7 +283,8 @@ class ARKBSimulation:
                 btc_cost = nav * unit_size * (1 + self.cfg.btc_trading_spread_bps / 10_000)
                 etf_proceeds = mkt * unit_size * (1 - self.cfg.etf_trading_spread_bps / 10_000)
                 gross_pnl = (etf_proceeds - btc_cost) * units
-                net_pnl = gross_pnl - self.cfg.wire_fee_usd * units
+                wire = self.cfg.wire_fee_usd if getattr(self.cfg, "wire_fee_per_order", True) else self.cfg.wire_fee_usd * units
+                net_pnl = gross_pnl - wire
 
                 if net_pnl > 0:
                     creations += units
@@ -283,9 +307,21 @@ class ARKBSimulation:
                 etf_cost = mkt * unit_size * (1 + self.cfg.etf_trading_spread_bps / 10_000)
                 btc_proceeds = nav * unit_size * (1 - self.cfg.btc_trading_spread_bps / 10_000)
                 gross_pnl = (btc_proceeds - etf_cost) * units
-                net_pnl = gross_pnl - self.cfg.wire_fee_usd * units
+                wire = self.cfg.wire_fee_usd if getattr(self.cfg, "wire_fee_per_order", True) else self.cfg.wire_fee_usd * units
+                net_pnl = gross_pnl - wire
 
                 if net_pnl > 0:
+                    # Keep shares outstanding non-negative
+                    max_units = self.shares_outstanding // unit_size
+                    if max_units <= 0:
+                        continue
+                    units = min(units, max_units)
+                    # recompute pnl if units clamped
+                    if units != conviction:
+                        gross_pnl = (btc_proceeds - etf_cost) * units
+                        net_pnl = gross_pnl - wire
+                        if net_pnl <= 0:
+                            continue
                     redemptions += units
                     minute_pnl += net_pnl
                     self.shares_outstanding -= units * unit_size
@@ -312,6 +348,7 @@ class ARKBSimulation:
         for t in iterator:
             day = t // self.cfg.minutes_per_day + 1
             minute = t % self.cfg.minutes_per_day
+            self.elapsed_minutes = t + 1
 
             # Step prices
             self._step_btc_price()
@@ -557,7 +594,7 @@ def print_summary(sim: ARKBSimulation, chart_path: str, snap_path: str, arb_path
         console.print()
     else:
         # Plain text fallback
-        sep = "─" * 55
+        sep = "-" * 55
         print(f"\n{'ARKB ETF ARBITRAGE SIMULATION RESULTS':^55}")
         print(sep)
         print(f"  Days: {cfg.trading_days}  |  Minutes: {len(snaps):,}")
@@ -608,6 +645,12 @@ Examples:
 
 
 def main():
+    # Best-effort UTF-8 console on Windows
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     args = parse_args()
 
     # Resolve paths relative to sim.py location
@@ -638,6 +681,8 @@ def main():
         cfg.random_seed = args.seed
     if args.out:
         cfg.output_dir = args.out
+
+    cfg.validate()
 
     if RICH:
         console.print(Panel.fit(

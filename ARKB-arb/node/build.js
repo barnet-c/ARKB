@@ -13,15 +13,20 @@ const requiredFilesToCopy = [
   ['monitor.js', 'monitor.js'],
   ['verify.js', 'verify.js'],
   ['config.json', 'config.json'],
+  ['config.json', 'public/config.json'],
   ['package.json', 'package.json'],
   ['package-lock.json', 'package-lock.json'],
   ['staticwebapp.config.json', 'staticwebapp.config.json'],
   ['public/index.html', 'index.html'],
   ['public/index.html', 'public/index.html'],
+  ['public/app.js', 'app.js'],
+  ['public/app.js', 'public/app.js'],
+  ['public/config.json', 'config.json'],
   ['public/openexa_logo.webp', 'openexa_logo.webp'],
   ['public/openexa_logo.webp', 'public/openexa_logo.webp'],
   ['lib/utils.js', 'lib/utils.js'],
   ['lib/discord.js', 'lib/discord.js'],
+  ['.env.example', '.env.example'],
 ];
 
 const optionalFilesToCopy = [
@@ -35,21 +40,16 @@ function ensureDir(dirPath) {
 function copyFile(fromRelativePath, toRelativePath) {
   const sourcePath = path.join(rootDir, fromRelativePath);
   const targetPath = path.join(distDir, toRelativePath);
-
   if (!fs.existsSync(sourcePath)) {
     throw new Error(`Missing required build input: ${fromRelativePath}`);
   }
-
   ensureDir(path.dirname(targetPath));
   fs.copyFileSync(sourcePath, targetPath);
 }
 
 function copyFileIfPresent(fromRelativePath, toRelativePath) {
   const sourcePath = path.join(rootDir, fromRelativePath);
-  if (!fs.existsSync(sourcePath)) {
-    return;
-  }
-
+  if (!fs.existsSync(sourcePath)) return;
   const targetPath = path.join(distDir, toRelativePath);
   ensureDir(path.dirname(targetPath));
   fs.copyFileSync(sourcePath, targetPath);
@@ -60,22 +60,12 @@ function cleanDist() {
   ensureDir(distDir);
 }
 
-function writeEnvExample() {
-  const envExample = [
-    'DEPLOYMENT_TOKEN=your_static_web_apps_deployment_token',
-    'DISCORD_TOKEN=your_discord_bot_token_here',
-    'DISCORD_USER_ID=your_discord_user_id_here',
-    'DISCORD_GUILD_ID=your_discord_guild_id_here',
-    '',
-  ].join('\n');
-
-  fs.writeFileSync(path.join(distDir, '.env.example'), envExample);
-}
-
 function verifyDistManifest() {
   const requiredDistFiles = [
     'index.html',
+    'app.js',
     'public/index.html',
+    'public/app.js',
     'openexa_logo.webp',
     'public/openexa_logo.webp',
     'staticwebapp.config.json',
@@ -92,8 +82,7 @@ function verifyDistManifest() {
   ];
 
   const missing = requiredDistFiles.filter((relativePath) => {
-    const fullPath = path.join(distDir, relativePath);
-    return !fs.existsSync(fullPath);
+    return !fs.existsSync(path.join(distDir, relativePath));
   });
 
   if (missing.length > 0) {
@@ -102,17 +91,16 @@ function verifyDistManifest() {
 }
 
 function main() {
-  cleanDist();
+  // Keep public/config.json in sync with root config for static hosting
+  fs.copyFileSync(path.join(rootDir, 'config.json'), path.join(rootDir, 'public', 'config.json'));
 
+  cleanDist();
   for (const [fromRelativePath, toRelativePath] of requiredFilesToCopy) {
     copyFile(fromRelativePath, toRelativePath);
   }
-
   for (const [fromRelativePath, toRelativePath] of optionalFilesToCopy) {
     copyFileIfPresent(fromRelativePath, toRelativePath);
   }
-
-  writeEnvExample();
   verifyDistManifest();
   console.log(`Built dist at ${distDir}`);
 }
