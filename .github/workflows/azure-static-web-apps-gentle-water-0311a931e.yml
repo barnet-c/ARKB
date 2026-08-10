@@ -40,9 +40,14 @@ jobs:
           action: "upload"
           ###### Repository/Build Configurations - These values can be configured to match your app requirements. ######
           # For more information regarding Static Web App workflow configurations, please visit: https://aka.ms/swaworkflowconfig
-          app_location: "./ARKB-arb" # App source code path
+          # The static site is the dashboard's public/ folder — that is the
+          # only directory in this repo containing an index.html. Pointing at
+          # ARKB-arb made Oryx pick the Python builder (because of sim.py) and
+          # then fail with "Failed to find a default file in the app artifacts
+          # folder". No build step is needed: public/ is already deployable.
+          app_location: "ARKB-arb/node/public" # App source code path
           api_location: "" # Api source code path - optional
-          output_location: "." # Built app content directory - optional
+          output_location: "" # Built app content directory - optional
           github_id_token: ${{ steps.idtoken.outputs.result }}
           ###### End of Repository/Build Configurations ######
 

@@ -94,6 +94,13 @@ function main() {
   // Keep public/config.json in sync with root config for static hosting
   fs.copyFileSync(path.join(rootDir, 'config.json'), path.join(rootDir, 'public', 'config.json'));
 
+  // public/ is what Azure Static Web Apps deploys (app_location), so the
+  // routing + mime config has to live there too or it is silently dropped
+  fs.copyFileSync(
+    path.join(rootDir, 'staticwebapp.config.json'),
+    path.join(rootDir, 'public', 'staticwebapp.config.json')
+  );
+
   cleanDist();
   for (const [fromRelativePath, toRelativePath] of requiredFilesToCopy) {
     copyFile(fromRelativePath, toRelativePath);
