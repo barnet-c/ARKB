@@ -9,7 +9,9 @@ const https = require('https');
 const http = require('http');
 const zlib = require('zlib');
 
-const DEFAULT_BTC_PER_SHARE = 0.000303;
+// Last-resort fallback only: config.json is preferred, ARK holdings above that.
+// Keep in step with config.json — 0.000303 was stale by ~950 bps.
+const DEFAULT_BTC_PER_SHARE = 0.0003315923068464;
 const DEFAULT_SHARES_OUTSTANDING = 75_000_000;
 
 function pickModule(url) {

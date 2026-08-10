@@ -3,7 +3,8 @@
     "ticker": "ARKB",
     "name": "ARK 21Shares Bitcoin ETF",
     "creationUnitShares": 5000,
-    "btcPerShare": 0.000303,
+    "btcPerShare": 0.0003315923068464,
+    "_btcPerShareNote": "Taken from the live arkb.openexa.com build. Corroborated to 0.07% by ARKB mid / BTC spot, and by the same check on IBIT (0.00056631 implied vs 0.000567 documented). The old 0.000303 was stale by ~950 bps and produced a phantom CREATE signal. Do NOT recompute this from mid/spot - that forces NAV = mid and zeroes the basis.",
     "sharesOutstanding": 75000000,
     "sponsor": "ARK Investment Management / 21Shares",
     "custodian": "Coinbase Custody",
@@ -13,15 +14,16 @@
     "ticker": "BTC-USD"
   },
   "market": {
-    "btcSpotUsd": 85000
+    "_btcSpotUsdNote": "Dry-run seed only; the live feed overrides it. Kept near spot so --dry-run produces realistic ARKB levels instead of an $85k fantasy.",
+    "btcSpotUsd": 64000
   },
   "costs": {
-    "creationRedemptionFeeUsd": 200,
-    "_creationRedemptionFeeNote": "NOT PUBLICLY DISCLOSED. Exhibit E of AP Agreement is private. Best estimate for cash-creation model: $100-$300. See PARAMETERS.md.",
+    "creationRedemptionFeeUsd": 500,
+    "_creationRedemptionFeeNote": "NOT PUBLICLY DISCLOSED. Exhibit E of AP Agreement is private. PARAMETERS.md estimates $100-$300; the live arkb.openexa.com build uses $500 and that is the figure adopted here. It dominates the cost model (~47 of ~52.5 bps), so revisit it before trusting any signal.",
     "etfCommissionPerShare": 0.005,
-    "btcExecutionBps": 2,
+    "btcExecutionBps": 0,
     "marketImpactBps": 1,
-    "btcSpotSpreadBps": 2
+    "btcSpotSpreadBps": 1
   },
   "signals": {
     "minSpreadAfterCostsBps": 10,

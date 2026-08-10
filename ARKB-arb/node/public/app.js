@@ -27,6 +27,14 @@ const fmtCompact = (n) => {
   if (v >= 1e3) return `$${fmtN(n / 1e3, 1)}K`;
   return fmtUsd(n, 2);
 };
+/* Bitcoin amounts are shown whole, never rounded: one basket is
+   1.657961534232 BTC, not "1.6580". Rounding a coin quantity on an
+   arbitrage desk hides real money. */
+const fmtBtcExact = (n, maxDigits = 12) => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '—';
+  return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: maxDigits });
+};
 const setText = (id, value) => { const el = $(id); if (el) el.textContent = value; };
 const hhmmss = (d) => new Date(d).toLocaleTimeString('en-US', { hour12: false });
 
@@ -42,7 +50,10 @@ function animate(el, to, format, duration = 620) {
     return;
   }
   const from = Number.isFinite(prev?.value) ? prev.value : to;
-  if (REDUCED || Math.abs(to - from) < 1e-9) {
+  // A hidden tab gets no animation frames, so a tween would never paint and the
+  // figure would sit frozen at a stale value. Nobody is watching it move — just
+  // set it, so it is already correct the moment the tab is looked at again.
+  if (REDUCED || document.hidden || Math.abs(to - from) < 1e-9) {
     el.textContent = format(to);
     tweens.set(el, { value: to });
     return;
@@ -562,28 +573,55 @@ class GapChart {
 /* ══════════════════════════════════════════════════════════════
    CONFIG + MODEL  (mirrors lib/utils.js exactly)
    ══════════════════════════════════════════════════════════════ */
+/* Defaults must match config.json. If the config fetch ever fails these are
+   what the page runs on, so a stale value here is a silently wrong dashboard. */
 let CFG = {
-  etf: { creationUnitShares: 5000, btcPerShare: 0.000303, sharesOutstanding: 75000000 },
+  etf: { creationUnitShares: 5000, btcPerShare: 0.0003315923068464, sharesOutstanding: 75000000 },
   costs: {
-    creationRedemptionFeeUsd: 200,
+    creationRedemptionFeeUsd: 500,
     etfCommissionPerShare: 0.005,
-    btcExecutionBps: 2,
+    btcExecutionBps: 0,
     marketImpactBps: 1,
-    btcSpotSpreadBps: 2,
+    btcSpotSpreadBps: 1,
   },
   signals: { minSpreadAfterCostsBps: 10, cooldownMs: 15000 },
   coinbase: { restUrl: 'https://api.exchange.coinbase.com/products/BTC-USD/ticker' },
   marketOverviewUrl: 'https://btctrader-api-68276-gqbkg8bucfbndjgn.z01.azurefd.net/api/market-overview',
 };
 
+/* ── basket sizing ───────────────────────────────────────────────
+   How many creation units the desk is pricing, and how the flat
+   create/redeem fee behaves as that size grows.
+
+     'basket' — fee is charged per creation unit (industry norm).
+                Total fee scales linearly, so the bps drag is
+                IDENTICAL at every size and the trigger never moves.
+     'order'  — one flat fee for the whole order. The bps drag falls
+                as 1/units, which is what makes large baskets pay.
+
+   The real ARKB schedule is an undisclosed private term (see
+   PARAMETERS.md), so both are offered rather than one being asserted.
+   ─────────────────────────────────────────────────────────────── */
+const sizing = { units: 1, feeUsd: null, feeMode: 'basket' };
+
+function feeDefault() { return Number(CFG.costs.creationRedemptionFeeUsd) || 0; }
+function feeUsd() { return sizing.feeUsd == null ? feeDefault() : sizing.feeUsd; }
+function basketShares() { return (Number(CFG.etf.creationUnitShares) || 5000) * sizing.units; }
+function totalFeeUsd() { return sizing.feeMode === 'order' ? feeUsd() : feeUsd() * sizing.units; }
+function sizingIsDefault() {
+  return sizing.units === 1 && sizing.feeMode === 'basket' && sizing.feeUsd == null;
+}
+
 function costParts(mid) {
   const c = CFG.costs;
-  const cu = CFG.etf.creationUnitShares;
+  const shares = basketShares();
   const price = Number(mid);
-  if (!(price > 0) || !(cu > 0)) return null;
-  const notional = cu * price;
+  if (!(price > 0) || !(shares > 0)) return null;
+  const notional = shares * price;
   return {
-    fee: (c.creationRedemptionFeeUsd / notional) * 10000,
+    // only the flat fee is size-sensitive; commission is per share and the
+    // rest are already expressed in bps, so they are size-invariant
+    fee: (totalFeeUsd() / notional) * 10000,
     commission: (c.etfCommissionPerShare / price) * 10000,
     execution: c.btcExecutionBps,
     impact: c.marketImpactBps * 2,
@@ -608,7 +646,7 @@ function evaluate(arkbMid, btcPrice, btcPerShare) {
   if (premBps > triggerBps) signal = 'CREATE';
   else if (premBps < -triggerBps) signal = 'REDEEM';
   const spreadCapturedBps = signal === 'NEUTRAL' ? 0 : Math.abs(premBps) - costBps;
-  const pnlUsd = (spreadCapturedBps / 10000) * CFG.etf.creationUnitShares * mid;
+  const pnlUsd = (spreadCapturedBps / 10000) * basketShares() * mid;
   return { ok: true, nav, premBps, costBps, triggerBps, signal, spreadCapturedBps, pnlUsd };
 }
 
@@ -624,7 +662,7 @@ const state = {
   basisBps: 0,
   lastSignalAt: 0,
   lastSignal: 'NEUTRAL',
-  btcPerShare: 0.000303,
+  btcPerShare: 0.0003315923068464,
   btcPerShareSource: 'config',
   mode: 'standalone',
   backendLive: false,
@@ -639,6 +677,7 @@ const state = {
   basisTrail: [],
   open: {},
   lastTickAt: 0,
+  lastSnapshot: null,
 };
 
 let liveArkb = null;
@@ -693,10 +732,14 @@ function renderVerdict(signal, edge, trigger, prem) {
 
   const action = $('verdict-action');
   if (action) {
+    const n = sizing.units;
+    const word = n === 1 ? 'a basket' : `${n} baskets`;
+    const sh = basketShares().toLocaleString();
+    const btc = fmtBtcExact(basketShares() * state.btcPerShare);
     if (signal === 'CREATE') {
-      action.innerHTML = `<b>Create a basket.</b> Buy ${fmtN(CFG.etf.creationUnitShares * state.btcPerShare, 4)} BTC, deliver to the trust, sell ${CFG.etf.creationUnitShares.toLocaleString()} shares into the bid.`;
+      action.innerHTML = `<b>Create ${word}.</b> Buy ${btc} BTC, deliver to the trust, sell ${sh} shares into the bid.`;
     } else if (signal === 'REDEEM') {
-      action.innerHTML = `<b>Redeem a basket.</b> Lift ${CFG.etf.creationUnitShares.toLocaleString()} shares, hand them to the trust, sell the ${fmtN(CFG.etf.creationUnitShares * state.btcPerShare, 4)} BTC that comes back.`;
+      action.innerHTML = `<b>Redeem ${word}.</b> Lift ${sh} shares, hand them to the trust, sell the ${btc} BTC that comes back.`;
     } else {
       action.innerHTML = 'No actionable gap. The fund is tracking its bitcoin closely enough that a round trip would not pay for itself.';
     }
@@ -884,10 +927,14 @@ function renderSnapshot(s) {
   const bps = Number(s.btcPerShare) || state.btcPerShare;
   const source = s.btcPerShareSource || state.btcPerShareSource;
   const ev = evaluate(s.arkbMid, s.btcPrice, bps);
-  const trigger = Number.isFinite(s.trigger) ? s.trigger : ev.triggerBps;
-  const cost = Number.isFinite(s.costBps) ? s.costBps : ev.costBps;
+  // The backend prices a single basket at the configured fee. As soon as the
+  // desk sizes the trade differently, its cost/trigger/signal no longer apply
+  // and the local model — identical maths, chosen sizing — takes over.
+  const sized = !sizingIsDefault();
+  const trigger = !sized && Number.isFinite(s.trigger) ? s.trigger : ev.triggerBps;
+  const cost = !sized && Number.isFinite(s.costBps) ? s.costBps : ev.costBps;
   const prem = Number.isFinite(s.premBps) ? s.premBps : ev.premBps;
-  const signal = s.signal || ev.signal;
+  const signal = !sized && s.signal ? s.signal : ev.signal;
   const mid = Number(s.arkbMid);
   const nav = Number(ev.nav || s.nav);
 
@@ -937,16 +984,19 @@ function renderSnapshot(s) {
   animate($('arkb-ask'), Number(s.arkbAsk), (v) => fmtUsd(v, 4));
   animate($('btc-price'), Number(s.btcPrice), (v) => fmtUsd(v, 0));
   animate($('nav'), nav, (v) => fmtUsd(v, 4));
-  setText('btc-per-share', Number(bps).toFixed(8));
+  setText('btc-per-share', fmtBtcExact(bps, 16));
   setText('nav-src', source === 'config' ? 'CONFIG' : source === 'default' ? 'DEFAULT' : 'ARK CSV');
 
-  const cu = CFG.etf.creationUnitShares;
+  const cu = basketShares();
   const cuBtc = cu * bps;
-  const cuNotional = (mid > 0 ? mid : nav) * cu;
-  const cuDetail = `${fmtN(cuBtc, 4)} BTC · ${cu.toLocaleString()} shares`;
+  // Value of the bitcoin behind one basket, so this figure agrees with the BTC
+  // amount shown beside it (cuBtc * spot). Fee amortisation still uses traded
+  // notional (mid * shares) inside costParts — different quantity, on purpose.
+  const cuNotional = (nav > 0 ? nav : mid) * cu;
+  const cuDetail = `${fmtBtcExact(cuBtc)} BTC · ${cu.toLocaleString()} shares`;
   animate($('cu-value'), cuNotional, (v) => fmtCompact(v));
   animate($('cu-value-card'), cuNotional, (v) => fmtUsd(v, 2));
-  setText('cu-shares', `${cu.toLocaleString()} sh`);
+  setText('cu-shares', sizing.units === 1 ? `${cu.toLocaleString()} sh` : `× ${sizing.units}`);
   setText('cu-detail', cuDetail);
   setText('cu-detail-card', cuDetail);
   animate($('cost-total'), cost, (v) => `${fmtN(v, 2)} bps`);
@@ -976,10 +1026,12 @@ function renderSnapshot(s) {
   setText('t-nav', fmtUsd(nav, 2));
   setText('t-btc', fmtUsd(Number(s.btcPrice), 0));
   setText('t-basis', `${fmtSigned(prem, 1)} bps`);
+  setText('t-updated', hhmmss(Date.now()));
 
-  /* ladder + waterfall */
+  /* ladder + waterfall + sizing */
   renderLadder(Number(s.arkbBid), Number(s.arkbAsk), mid, nav);
   renderWaterfall(mid, prem, cost);
+  renderSizingSummary(mid);
 
   /* p&l block */
   const totalPnl = state.backendLive && s.totalPnl != null ? s.totalPnl : state.totalPnl;
@@ -1024,6 +1076,7 @@ function renderSnapshot(s) {
   if (document.title !== nextTitle) document.title = nextTitle;
 
   state.lastTickAt = Date.now();
+  state.lastSnapshot = s;
   if (document.body.dataset.stale === '1') document.body.dataset.stale = '0';
 }
 
@@ -1331,6 +1384,106 @@ function bindUI() {
   });
 }
 
+/* ══════════════════════════════════════════════════════════════
+   BASKET SIZING CONTROLS
+   ══════════════════════════════════════════════════════════════ */
+function saveSizing() {
+  try { localStorage.setItem('arkb-sizing', JSON.stringify(sizing)); } catch { /* private mode */ }
+}
+function loadSizing() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('arkb-sizing') || 'null');
+    if (!raw) return;
+    if (Number.isFinite(raw.units)) sizing.units = clamp(Math.round(raw.units), 1, 500);
+    if (raw.feeUsd === null || Number.isFinite(raw.feeUsd)) sizing.feeUsd = raw.feeUsd;
+    if (raw.feeMode === 'basket' || raw.feeMode === 'order') sizing.feeMode = raw.feeMode;
+  } catch { /* ignore */ }
+}
+
+function syncSizingUI() {
+  const ui = $('units-input');
+  if (ui && document.activeElement !== ui) ui.value = String(sizing.units);
+  const fi = $('fee-input');
+  if (fi && document.activeElement !== fi) fi.value = String(feeUsd());
+
+  document.querySelectorAll('#unit-presets button').forEach((b) => {
+    b.classList.toggle('on', Number(b.dataset.units) === sizing.units);
+  });
+  document.querySelectorAll('#fee-mode button').forEach((b) => {
+    b.classList.toggle('on', b.dataset.mode === sizing.feeMode);
+  });
+  const down = $('units-down');
+  if (down) down.disabled = sizing.units <= 1;
+  const up = $('units-up');
+  if (up) up.disabled = sizing.units >= 500;
+}
+
+/* The point of the control: show what the flat fee actually costs at this
+   size, and what it would cost at one basket, side by side. */
+function renderSizingSummary(mid) {
+  const host = $('sz-summary');
+  if (!host) return;
+  const price = Number(mid);
+  if (!(price > 0)) { host.textContent = 'Waiting for a price.'; return; }
+
+  const shares = basketShares();
+  const perUnitShares = Number(CFG.etf.creationUnitShares) || 5000;
+  const feeBpsNow = (totalFeeUsd() / (shares * price)) * 10000;
+  const feeBpsOne = (feeUsd() / (perUnitShares * price)) * 10000;
+  const n = sizing.units;
+
+  const head = `<b>${n}</b> basket${n === 1 ? '' : 's'} · <b>${shares.toLocaleString()}</b> shares · `
+    + `<b>${fmtBtcExact(shares * state.btcPerShare)}</b> BTC · <b>${fmtCompact(shares * price)}</b> notional`;
+
+  let tail;
+  if (n === 1) {
+    tail = `Fee <b>${fmtUsd(totalFeeUsd(), 0)}</b> — <span class="hl">${fmtN(feeBpsNow, 2)} bps</span> of the round trip.`;
+  } else if (sizing.feeMode === 'order') {
+    tail = `One flat <b>${fmtUsd(totalFeeUsd(), 0)}</b> across all ${n} — the fee drag falls from `
+      + `${fmtN(feeBpsOne, 2)} to <span class="hl">${fmtN(feeBpsNow, 2)} bps</span>, so the trigger drops with size.`;
+  } else {
+    tail = `<b>${fmtUsd(feeUsd(), 0)}</b> × ${n} = <b>${fmtUsd(totalFeeUsd(), 0)}</b> — charged per basket, so the drag stays `
+      + `<span class="hl">${fmtN(feeBpsNow, 2)} bps</span> at any size. Only the dollars scale, not the edge.`;
+  }
+  host.innerHTML = `${head}<br>${tail}`;
+}
+
+function setSizing(patch) {
+  Object.assign(sizing, patch);
+  sizing.units = clamp(Math.round(sizing.units) || 1, 1, 500);
+  saveSizing();
+  syncSizingUI();
+  if (state.lastSnapshot) renderSnapshot(state.lastSnapshot);
+}
+
+function bindSizing() {
+  loadSizing();
+  syncSizingUI();
+
+  $('units-down')?.addEventListener('click', () => setSizing({ units: sizing.units - 1 }));
+  $('units-up')?.addEventListener('click', () => setSizing({ units: sizing.units + 1 }));
+  $('units-input')?.addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    if (Number.isFinite(v) && v >= 1) setSizing({ units: v });
+  });
+  $('units-input')?.addEventListener('blur', syncSizingUI);
+
+  $('fee-input')?.addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    if (Number.isFinite(v) && v >= 0) setSizing({ feeUsd: v });
+  });
+  $('fee-input')?.addEventListener('blur', syncSizingUI);
+
+  document.querySelectorAll('#unit-presets button').forEach((b) => {
+    b.addEventListener('click', () => setSizing({ units: Number(b.dataset.units) }));
+  });
+  document.querySelectorAll('#fee-mode button').forEach((b) => {
+    b.addEventListener('click', () => setSizing({ feeMode: b.dataset.mode }));
+  });
+  $('sizing-reset')?.addEventListener('click', () =>
+    setSizing({ units: 1, feeUsd: null, feeMode: 'basket' }));
+}
+
 /* Data that has stopped arriving must stop looking authoritative. */
 function watchFreshness() {
   setInterval(() => {
@@ -1366,6 +1519,7 @@ async function boot() {
   mq.addEventListener?.('change', () => { PAL = null; });
 
   await loadConfig();
+  bindSizing();          // after loadConfig so the fee field shows the real default
   startBackendMode();
   loadMarketOverview();
   setInterval(loadMarketOverview, 8000);

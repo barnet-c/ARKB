@@ -150,12 +150,8 @@ h1,h2,h3{font-weight:600;letter-spacing:-.025em;line-height:1.2}
   display:flex;align-items:center;gap:18px;
 }
 .brand{display:flex;align-items:center;gap:11px;flex:none}
-.mark{
-  width:32px;height:32px;border-radius:10px;flex:none;display:grid;place-items:center;
-  background:linear-gradient(150deg,var(--card-2),transparent);
-  border:1px solid var(--line-2);
-}
-.mark svg{width:18px;height:18px;overflow:visible}
+.logo{height:24px;width:auto;max-width:120px;object-fit:contain;flex:none;display:block}
+.brand-sep{width:1px;height:20px;background:var(--line-2);flex:none}
 .brand-text{display:flex;flex-direction:column;line-height:1.15}
 .brand-text b{font-size:14.5px;font-weight:700;letter-spacing:-.02em}
 .brand-text i{font-style:normal;font-size:10.5px;color:var(--ink-3);letter-spacing:.02em}
@@ -426,6 +422,59 @@ main{width:min(100%,var(--shell));margin:0 auto;padding:22px 26px 90px;display:f
 }
 .wf-total .k{font-size:12.5px;font-weight:600;color:var(--ink)}
 .wf-total .v{font-size:20px;font-weight:700;letter-spacing:-.03em;color:var(--accent)}
+/* ══ basket sizing controls ═════════════════════════════════════ */
+.sizing{
+  margin-bottom:18px;padding:14px 15px;border-radius:var(--r-md);
+  border:1px solid var(--line);background:var(--card-2);
+  display:flex;flex-direction:column;gap:10px;
+}
+.sz-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sz-label{
+  font-size:10.5px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--ink-3);width:52px;flex:none;
+}
+.stepper{
+  display:inline-flex;align-items:center;height:30px;border-radius:var(--r-sm);
+  border:1px solid var(--line-2);background:var(--card-solid);overflow:hidden;
+}
+.stepper button{
+  width:28px;height:100%;display:grid;place-items:center;
+  font-size:15px;font-weight:600;color:var(--ink-2);line-height:1;
+  transition:background .18s var(--e-out),color .18s var(--e-out);
+}
+.stepper button:hover{background:var(--card-2);color:var(--ink)}
+.stepper button:disabled{opacity:.3;cursor:not-allowed}
+.stepper input,.field input{
+  width:58px;height:28px;border:0;background:none;text-align:center;
+  font:inherit;font-size:13px;font-weight:700;color:var(--ink);
+  font-variant-numeric:tabular-nums;letter-spacing:-.02em;
+  -moz-appearance:textfield;appearance:textfield;
+}
+.stepper input::-webkit-outer-spin-button,.stepper input::-webkit-inner-spin-button,
+.field input::-webkit-outer-spin-button,.field input::-webkit-inner-spin-button{
+  -webkit-appearance:none;margin:0;
+}
+.field{
+  display:inline-flex;align-items:center;height:30px;padding:0 4px 0 10px;
+  border-radius:var(--r-sm);border:1px solid var(--line-2);background:var(--card-solid);
+  font-size:13px;font-weight:700;color:var(--ink-3);
+}
+.field input{width:66px;text-align:left}
+.seg.small button{height:24px;padding:0 10px;font-size:11px}
+.sz-reset{
+  margin-left:auto;height:26px;padding:0 10px;border-radius:var(--r-pill);
+  border:1px solid var(--line);background:none;
+  font-size:11px;font-weight:600;color:var(--ink-3);
+  transition:color .2s var(--e-out),border-color .2s var(--e-out);
+}
+.sz-reset:hover{color:var(--ink);border-color:var(--line-2)}
+.sz-summary{
+  padding-top:10px;border-top:1px solid var(--line);
+  font-size:12px;color:var(--ink-2);line-height:1.5;
+}
+.sz-summary b{color:var(--ink);font-weight:700}
+.sz-summary .hl{color:var(--accent);font-weight:700}
+
 .basket{
   margin-top:16px;padding:15px 16px;border-radius:var(--r-md);
   background:linear-gradient(160deg,color-mix(in oklab,var(--ice) 11%,transparent),transparent),var(--card-2);
@@ -591,13 +640,9 @@ body[data-stale="1"] .tape-strip{opacity:.45}
 <!-- ══════════ TOP BAR ══════════ -->
 <header class="topbar">
   <div class="topbar-in">
-    <a class="brand" href="#top" aria-label="ARKB desk">
-      <span class="mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" fill="none">
-          <path d="M3 8h18M3 16h18" stroke="currentColor" stroke-opacity=".38" stroke-width="1.6" stroke-linecap="round"/>
-          <path d="M12 5.5l4 6.5-4 6.5-4-6.5z" fill="var(--accent)"/>
-        </svg>
-      </span>
+    <a class="brand" href="https://www.openexa.com/" target="_blank" rel="noopener noreferrer" aria-label="OpenEXA — ARKB desk">
+      <img class="logo" src="openexa_logo.webp" alt="OpenEXA">
+      <span class="brand-sep" aria-hidden="true"></span>
       <span class="brand-text">
         <b>ARKB</b>
         <i>Creation / redemption desk</i>
@@ -609,6 +654,7 @@ body[data-stale="1"] .tape-strip{opacity:.45}
       <span class="tape-item"><b>NAV</b><span id="t-nav">—</span></span>
       <span class="tape-item"><b>BTC</b><span id="t-btc">—</span></span>
       <span class="tape-item"><b>Basis</b><span id="t-basis">—</span></span>
+      <span class="tape-item"><b>Updated</b><span id="t-updated">—</span></span>
     </div>
 
     <div class="topbar-right">
@@ -779,6 +825,33 @@ body[data-stale="1"] .tape-strip{opacity:.45}
         </div>
       </div>
 
+      <div class="sizing">
+        <div class="sz-row">
+          <span class="sz-label">Baskets</span>
+          <div class="stepper">
+            <button type="button" id="units-down" aria-label="Fewer baskets">−</button>
+            <input id="units-input" type="number" min="1" max="500" step="1" value="1" aria-label="Number of creation units">
+            <button type="button" id="units-up" aria-label="More baskets">+</button>
+          </div>
+          <div class="seg small" id="unit-presets" role="group" aria-label="Preset sizes">
+            <button type="button" data-units="1" class="on">1</button>
+            <button type="button" data-units="5">5</button>
+            <button type="button" data-units="10">10</button>
+            <button type="button" data-units="25">25</button>
+          </div>
+        </div>
+        <div class="sz-row">
+          <span class="sz-label">Fee</span>
+          <div class="field"><span>$</span><input id="fee-input" type="number" min="0" step="25" value="500" aria-label="Create or redeem fee in dollars"></div>
+          <div class="seg small" id="fee-mode" role="group" aria-label="How the fee scales">
+            <button type="button" data-mode="basket" class="on">per basket</button>
+            <button type="button" data-mode="order">per order</button>
+          </div>
+          <button type="button" class="sz-reset" id="sizing-reset">Reset</button>
+        </div>
+        <p class="sz-summary" id="sz-summary">—</p>
+      </div>
+
       <div class="wf-head">
         <span>Gross basis <b class="num" id="wf-gross">—</b> bps</span>
         <span id="wf-verdict">—</span>
@@ -879,7 +952,7 @@ body[data-stale="1"] .tape-strip{opacity:.45}
   </section>
 
   <footer>
-    <span>ARK 21Shares Bitcoin ETF · bitcoin held at Coinbase Custody · figures are estimates, not investment advice</span>
+    <span>ARKB — ARK 21Shares Bitcoin ETF · Sponsor: ARK Investment Management / 21Shares · Custodian: Coinbase Custody · figures are estimates, not investment advice</span>
     <span>
       <span class="kbd">?</span> shortcuts · built by <a href="https://www.openexa.com/" target="_blank" rel="noopener noreferrer">OpenExa</a>
     </span>
