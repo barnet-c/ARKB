@@ -529,6 +529,29 @@ main{width:min(100%,var(--shell));margin:0 auto;padding:22px 26px 90px;display:f
 .sz-summary b{color:var(--ink);font-weight:700}
 .sz-summary .hl{color:var(--accent);font-weight:700}
 
+/* ══ feasibility ════════════════════════════════════════════════ */
+.feas{
+  margin-top:16px;padding:15px 16px;border-radius:var(--r-md);
+  border:1px solid var(--line);
+  background:linear-gradient(165deg,rgba(255,255,255,.045),transparent 60%),var(--card-2);
+}
+.feas-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.feas-label{font-size:10.5px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.feas-verdict{font-size:12.5px;font-weight:700;letter-spacing:-.01em;color:var(--ink-2);text-align:right}
+.feas-verdict.ok{color:var(--pos)}
+.feas-verdict.no{color:var(--ink-2)}
+.feas-body{margin-top:9px;font-size:12.5px;line-height:1.55;color:var(--ink-2)}
+.feas-body b{color:var(--ink);font-weight:700}
+.feas-apply{
+  margin-top:12px;height:30px;padding:0 14px;border-radius:var(--r-pill);
+  border:1px solid color-mix(in oklab,var(--pos) 40%,transparent);
+  background:color-mix(in oklab,var(--pos) 13%,transparent);
+  color:var(--pos);font-size:12px;font-weight:700;
+  transition:background .2s var(--e-out),transform .2s var(--e-out);
+}
+.feas-apply:hover{background:color-mix(in oklab,var(--pos) 22%,transparent)}
+.feas-apply:active{transform:scale(.97)}
+
 .basket{
   margin-top:16px;padding:15px 16px;border-radius:var(--r-md);
   background:linear-gradient(160deg,color-mix(in oklab,var(--ice) 11%,transparent),transparent),var(--card-2);
@@ -918,6 +941,15 @@ body[data-stale="1"] .tape-strip{opacity:.45}
       <div class="wf-total">
         <span class="k">Round trip cost</span>
         <span class="v num" id="cost-total">—</span>
+      </div>
+
+      <div class="feas">
+        <div class="feas-head">
+          <span class="feas-label">Feasibility</span>
+          <span class="feas-verdict" id="feas-verdict">—</span>
+        </div>
+        <p class="feas-body" id="feas-body">—</p>
+        <button type="button" class="feas-apply" id="feas-apply" hidden>Size to —</button>
       </div>
 
       <div class="basket">

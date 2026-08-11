@@ -633,6 +633,92 @@ function evaluate(arkbMid, btcPrice, btcPerShare) {
   return { ok: true, nav, premBps, costBps, triggerBps, signal, spreadCapturedBps, pnlUsd };
 }
 
+/* ── feasibility ─────────────────────────────────────────────────
+   "Watching" is the honest answer almost always, but on its own it is
+   a dead end. This answers the question that actually follows: what
+   would it take?
+
+   Commission is charged per share and execution/impact/spread are
+   already in bps, so those four survive any amount of scale. Only the
+   flat fee amortises. That gives a hard floor the trigger can never go
+   below — and if the gap is under it, no basket size on earth clears.
+   ─────────────────────────────────────────────────────────────── */
+function feasibility(mid, prem) {
+  const c = CFG.costs;
+  const cu = Number(CFG.etf.creationUnitShares) || 5000;
+  const price = Number(mid);
+  const gap = Math.abs(Number(prem));
+  if (!(price > 0) || !Number.isFinite(gap)) return null;
+
+  const minEdge = Number(CFG.signals.minSpreadAfterCostsBps) || 0;
+  const fixed = (c.etfCommissionPerShare / price) * 10000
+    + (Number(c.btcExecutionBps) || 0)
+    + (Number(c.marketImpactBps) || 0) * 2
+    + (Number(c.btcSpotSpreadBps) || 0);
+  const feeAt = (u) => ((sizing.feeMode === 'order' ? feeUsd() : feeUsd() * u) / (u * cu * price)) * 10000;
+
+  if (sizing.feeMode === 'basket') {
+    // fee bps is identical at every size, so it is part of the floor
+    const floor = fixed + feeAt(1);
+    const minGap = floor + minEdge;
+    return { mode: 'basket', gap, fixed, floor, minGap, units: null, reachable: gap > minGap, short: minGap - gap };
+  }
+
+  const minGap = fixed + minEdge;                 // fee -> 0 as size -> infinity
+  if (gap <= minGap) {
+    return { mode: 'order', gap, fixed, floor: fixed, minGap, units: null, reachable: false, short: minGap - gap };
+  }
+  // A zero fee solves to 0 baskets, and a gap barely over the floor solves to
+  // an absurd number. Clamp the floor at 1; the caller decides what is practical.
+  const units = Math.max(1, Math.ceil((feeUsd() * 10000) / ((gap - minGap) * cu * price)));
+  return { mode: 'order', gap, fixed, floor: fixed, minGap, units, reachable: true, short: 0 };
+}
+
+function renderFeasibility(mid, prem) {
+  const f = feasibility(mid, prem);
+  const verdict = $('feas-verdict');
+  const body = $('feas-body');
+  const apply = $('feas-apply');
+  if (!f || !verdict || !body || !apply) return;
+
+  const MAX_UNITS = 500;                       // matches the stepper's ceiling
+  const floorTxt = `${fmtN(f.minGap, 1)} bps`;
+  apply.hidden = true;
+
+  if (f.reachable && f.mode === 'order') {
+    const shares = (f.units * (Number(CFG.etf.creationUnitShares) || 5000)).toLocaleString();
+    const beyond = f.units > MAX_UNITS;
+    verdict.textContent = beyond ? 'Viable only at extreme size'
+      : f.units <= sizing.units ? 'Viable now' : `Viable from ${f.units} baskets`;
+    verdict.className = `feas-verdict ${beyond ? 'no' : 'ok'}`;
+    body.innerHTML = `Today's gap of <b>${fmtN(f.gap, 1)} bps</b> clears once the flat `
+      + `${fmtUsd(feeUsd(), 0)} order fee is spread across <b>${f.units.toLocaleString()}</b> `
+      + `basket${f.units === 1 ? '' : 's'} (${shares} shares). `
+      + (beyond ? `That is past the ${MAX_UNITS} this desk models — treat it as out of reach.`
+                : 'Below that the fee alone eats the edge.');
+    // only offered when scaling up is what unlocks it, and it is actually settable
+    if (!beyond && f.units > sizing.units) {
+      apply.hidden = false;
+      apply.textContent = `Size to ${f.units}`;
+      apply.dataset.units = String(f.units);
+    }
+  } else if (f.mode === 'order') {
+    verdict.textContent = 'Not viable at any size';
+    verdict.className = 'feas-verdict no';
+    body.innerHTML = `Commission, market impact and spot spread cost <b>${fmtN(f.fixed, 1)} bps</b> `
+      + `no matter how large the basket, so nothing under <b>${floorTxt}</b> can ever clear. `
+      + `Today's gap is ${fmtN(f.gap, 1)} bps — it must widen by <b>${fmtN(f.short, 1)} bps</b>.`;
+  } else {
+    verdict.textContent = f.reachable ? 'Viable now' : 'Not viable';
+    verdict.className = `feas-verdict ${f.reachable ? 'ok' : 'no'}`;
+    body.innerHTML = f.reachable
+      ? `The gap of <b>${fmtN(f.gap, 1)} bps</b> clears the ${floorTxt} bar. Size only scales the dollars.`
+      : `A per-basket fee costs the same <b>${fmtN(f.floor, 1)} bps</b> at every size, so the bar stays at `
+        + `<b>${floorTxt}</b> however many you do. Today's gap is ${fmtN(f.gap, 1)} bps — short by `
+        + `<b>${fmtN(f.short, 1)} bps</b>. Switch to a per-order fee to let scale help.`;
+  }
+}
+
 /* ══════════════════════════════════════════════════════════════
    SESSION STATE
    ══════════════════════════════════════════════════════════════ */
@@ -1048,6 +1134,7 @@ function renderSnapshot(s) {
   renderLadder(Number(s.arkbBid), Number(s.arkbAsk), mid, nav);
   renderWaterfall(mid, prem, cost);
   renderSizingSummary(mid);
+  renderFeasibility(mid, prem);
 
   /* p&l block */
   const totalPnl = state.backendLive && s.totalPnl != null ? s.totalPnl : state.totalPnl;
@@ -1058,7 +1145,11 @@ function renderSnapshot(s) {
     pnlEl.className = `pnl num ${totalPnl > 0 ? 'up' : totalPnl < 0 ? 'down' : ''}`;
     animate(pnlEl, totalPnl, (v) => fmtUsd(v, 2));
   }
-  setText('pnl-stats', `${tradeCount} signal${tradeCount === 1 ? '' : 's'} · ${fmtN(winRate, 0)}% profitable`);
+  // "0% profitable" reads as 0 winners out of N. With no trades at all there is
+  // no win rate to report, and claiming one implies losses that never happened.
+  setText('pnl-stats', tradeCount === 0
+    ? 'No signals yet this session'
+    : `${tradeCount} signal${tradeCount === 1 ? '' : 's'} · ${fmtN(winRate, 0)}% profitable`);
 
   /* session analytics */
   if (Number.isFinite(prem)) {
@@ -1496,6 +1587,11 @@ function bindSizing() {
   });
   $('sizing-reset')?.addEventListener('click', () =>
     setSizing({ units: 1, feeUsd: null, feeMode: 'basket' }));
+  // one click from "what would it take" to actually being sized for it
+  $('feas-apply')?.addEventListener('click', (e) => {
+    const u = Number(e.currentTarget.dataset.units);
+    if (Number.isFinite(u) && u >= 1) setSizing({ units: u });
+  });
 }
 
 /* Data that has stopped arriving must stop looking authoritative. */
