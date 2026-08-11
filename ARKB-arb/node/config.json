@@ -26,7 +26,7 @@
     "btcSpotSpreadBps": 1
   },
   "signals": {
-    "minSpreadAfterCostsBps": 10,
+    "minSpreadAfterCostsBps": 5,
     "cooldownMs": 15000
   },
   "ark21shares": {

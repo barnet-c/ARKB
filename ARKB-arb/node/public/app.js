@@ -567,7 +567,7 @@ let CFG = {
     marketImpactBps: 1,
     btcSpotSpreadBps: 1,
   },
-  signals: { minSpreadAfterCostsBps: 10, cooldownMs: 15000 },
+  signals: { minSpreadAfterCostsBps: 5, cooldownMs: 15000 },
   coinbase: { restUrl: 'https://api.exchange.coinbase.com/products/BTC-USD/ticker' },
   marketOverviewUrl: 'https://btctrader-api-68276-gqbkg8bucfbndjgn.z01.azurefd.net/api/market-overview',
 };

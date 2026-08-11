@@ -97,4 +97,5 @@ This codebase resolves BTC/share from config + ARK holdings CSV only.
 - BTC spot spread: 2 bps
 - **Total: ~8 bps + flat fee (amortized)**
 
-Signal triggers when `|premium| > total_cost_bps + 10 bps` (configurable).
+Signal triggers when `|premium| > total_cost_bps + 5 bps` (configurable via
+`signals.minSpreadAfterCostsBps`).
