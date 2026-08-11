@@ -24,7 +24,7 @@
 
   --r-xl:26px; --r-lg:20px; --r-md:14px; --r-sm:10px; --r-pill:999px;
   --shell:1280px;
-  --nav-h:60px;
+  --nav-h:72px;   /* raised to give the logo room; mobile drops back to 60 */
 
   --e-out:cubic-bezier(.16,1,.3,1);
   --e-io:cubic-bezier(.65,0,.35,1);
@@ -158,8 +158,8 @@ h1,h2,h3{font-weight:600;letter-spacing:-.025em;line-height:1.2}
 .brand{display:flex;align-items:center;gap:11px;flex:none}
 /* 500x269 source. Height is the binding constraint, not max-width —
    at 24px it rendered only 45px wide inside a 59px bar. */
-.logo{height:46px;width:auto;max-width:200px;object-fit:contain;flex:none;display:block}
-.brand-sep{width:1px;height:30px;background:var(--line-2);flex:none}
+.logo{height:56px;width:auto;max-width:240px;object-fit:contain;flex:none;display:block}
+.brand-sep{width:1px;height:34px;background:var(--line-2);flex:none}
 .brand-text{display:flex;flex-direction:column;line-height:1.15}
 .brand-text b{font-size:14.5px;font-weight:700;letter-spacing:-.02em}
 .brand-text i{font-style:normal;font-size:10.5px;color:var(--ink-3);letter-spacing:.02em}
@@ -676,6 +676,8 @@ body[data-stale="1"] .tape-strip{opacity:.45}
   main{padding:16px 14px 70px;gap:12px}
   .topbar-in{padding:0 14px;gap:10px}
   .brand{min-width:0;overflow:hidden}
+  /* phone keeps the original compact bar — the desktop growth stops here */
+  :root{--nav-h:60px}
   .logo{height:34px}
   .brand-sep{height:24px}
   .brand-text b{font-size:13.5px}
