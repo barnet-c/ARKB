@@ -156,8 +156,10 @@ h1,h2,h3{font-weight:600;letter-spacing:-.025em;line-height:1.2}
   display:flex;align-items:center;gap:18px;
 }
 .brand{display:flex;align-items:center;gap:11px;flex:none}
-.logo{height:24px;width:auto;max-width:120px;object-fit:contain;flex:none;display:block}
-.brand-sep{width:1px;height:20px;background:var(--line-2);flex:none}
+/* 500x269 source. Height is the binding constraint, not max-width —
+   at 24px it rendered only 45px wide inside a 59px bar. */
+.logo{height:38px;width:auto;max-width:170px;object-fit:contain;flex:none;display:block}
+.brand-sep{width:1px;height:26px;background:var(--line-2);flex:none}
 .brand-text{display:flex;flex-direction:column;line-height:1.15}
 .brand-text b{font-size:14.5px;font-weight:700;letter-spacing:-.02em}
 .brand-text i{font-style:normal;font-size:10.5px;color:var(--ink-3);letter-spacing:.02em}
@@ -674,6 +676,8 @@ body[data-stale="1"] .tape-strip{opacity:.45}
   main{padding:16px 14px 70px;gap:12px}
   .topbar-in{padding:0 14px;gap:10px}
   .brand{min-width:0;overflow:hidden}
+  .logo{height:30px}
+  .brand-sep{height:22px}
   .brand-text b{font-size:13.5px}
   .brand-text i{display:none}
   /* no keyboard on a phone */
