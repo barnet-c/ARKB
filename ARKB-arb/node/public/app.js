@@ -533,7 +533,7 @@ class GapChart {
       ctx.fill(); ctx.stroke();
 
       if (ro) {
-        if (!this.roShown) { ro.hidden = false; this.roShown = true; }
+        if (!this.roShown) { ro.classList.add('on'); this.roShown = true; }
         setText('ro-time', hhmmss(best.t));
         setText('ro-val', `${fmtSigned(best.y, 1)} bps`);
         const inMoney = Number.isFinite(trg) && Math.abs(best.y) > trg;
@@ -547,7 +547,7 @@ class GapChart {
         $('ro-val').style.color = c;
       }
     } else if (ro && this.roShown) {
-      ro.hidden = true;
+      ro.classList.remove('on');
       this.roShown = false;
     }
   }

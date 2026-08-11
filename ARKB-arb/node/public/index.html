@@ -65,6 +65,10 @@ body[data-state="neg"] { --accent:var(--neg) }
 body[data-signal="live"]{ --glow:1 }
 
 *{margin:0;padding:0;box-sizing:border-box}
+/* [hidden] only carries display:none from the UA stylesheet, so ANY author
+   rule that sets display beats it. .empty{display:flex} did exactly that,
+   leaving "the tape is quiet" on screen above a full table of signals. */
+[hidden]{display:none !important}
 html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;scroll-behavior:smooth}
 body{
   min-height:100vh;
@@ -363,9 +367,11 @@ main{width:min(100%,var(--shell));margin:0 auto;padding:22px 26px 90px;display:f
   font-size:11.5px;color:var(--ink-2);min-width:132px;
   transition:opacity .18s var(--e-out),transform .18s var(--e-out);
 }
-/* keep it in flow so it can fade, but genuinely inert while hidden —
-   an invisible tooltip must not be read out or copied with the page */
-.readout[hidden]{display:block;opacity:0;visibility:hidden;transform:translateY(-4px)}
+/* Class-toggled rather than [hidden], so it can still fade. visibility
+   keeps it genuinely inert while invisible — a hidden tooltip must not be
+   read out by a screen reader or copied with the page. */
+.readout{opacity:0;visibility:hidden;transform:translateY(-4px)}
+.readout.on{opacity:1;visibility:visible;transform:none}
 .readout .t{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-3)}
 .readout .v{font-size:19px;font-weight:700;letter-spacing:-.03em;margin-top:3px;color:var(--ink)}
 .readout .m{margin-top:4px}
@@ -817,7 +823,7 @@ body[data-stale="1"] .tape-strip{opacity:.45}
 
     <div class="chart-shell">
       <canvas id="gap-canvas" role="img" aria-label="Basis over time. No readings yet."></canvas>
-      <div class="readout" id="readout" hidden>
+      <div class="readout" id="readout">
         <div class="t" id="ro-time">—</div>
         <div class="v num" id="ro-val">—</div>
         <div class="m" id="ro-note">—</div>
