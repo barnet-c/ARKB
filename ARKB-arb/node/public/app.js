@@ -690,8 +690,10 @@ function lede(prem, signal, trigger) {
 }
 
 function renderVerdict(signal, edge, trigger, prem) {
+  // hue = which way the basis points; brightness = whether it is worth acting on
   document.body.dataset.state =
-    signal === 'CREATE' ? 'create' : signal === 'REDEEM' ? 'redeem' : 'neutral';
+    !Number.isFinite(prem) || Math.abs(prem) < 0.2 ? 'flat' : prem > 0 ? 'pos' : 'neg';
+  document.body.dataset.signal = signal === 'NEUTRAL' ? 'none' : 'live';
 
   const label = signal === 'CREATE' ? 'Create' : signal === 'REDEEM' ? 'Redeem' : 'Watching';
   setText('verdict-state', label);
@@ -701,6 +703,10 @@ function renderVerdict(signal, edge, trigger, prem) {
 
   animate($('verdict-edge'), edge, (v) => fmtSigned(v, 1));
   animate($('verdict-trigger'), trigger, (v) => fmtN(v, 1));
+  const vNum = document.querySelector('.verdict-num');
+  if (vNum) {
+    vNum.style.color = edge > 0 ? 'var(--pos)' : Number.isFinite(edge) ? 'var(--ink)' : 'var(--ink-3)';
+  }
 
   const pct = Number.isFinite(prem) && Number.isFinite(trigger) && trigger > 0
     ? clamp((Math.abs(prem) / trigger) * 100, 0, 100)
@@ -1034,6 +1040,8 @@ function renderSnapshot(s) {
   setText('t-nav', fmtUsd(nav, 2));
   setText('t-btc', fmtUsd(Number(s.btcPrice), 0));
   setText('t-basis', `${fmtSigned(prem, 1)} bps`);
+  const tb = $('t-basis');
+  if (tb) tb.className = Math.abs(prem) < 0.2 ? '' : prem > 0 ? 'pos' : 'neg';
   setText('t-updated', hhmmss(Date.now()));
 
   /* ladder + waterfall + sizing */
@@ -1511,8 +1519,10 @@ async function boot() {
   chart = new GapChart($('gap-canvas'));
   sparks.arkb = new Spark($('spark-arkb'));
   sparks.btc = new Spark($('spark-btc'));
-  sparks.nav = new Spark($('spark-nav'), 'neu');
-  sparks.cu = new Spark($('spark-cu'), 'neu');
+  // every rail sparkline reads its own direction — a blue line next to a red
+  // one implied a distinction that does not exist
+  sparks.nav = new Spark($('spark-nav'));
+  sparks.cu = new Spark($('spark-cu'));
   setInterval(() => Object.values(sparks).forEach((s) => s.draw()), 900);
   startSizeWatch();
 

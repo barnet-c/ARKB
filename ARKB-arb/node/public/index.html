@@ -54,10 +54,15 @@ html{
   --glow:.7;
 }
 
-/* state accent — the whole room takes the market's colour */
-body[data-state="neutral"]{ --accent:var(--neu) }
-body[data-state="create"] { --accent:var(--pos) }
-body[data-state="redeem"] { --accent:var(--neg) }
+/* The whole room takes the market's colour, and the colour is the SIGN of
+   the basis — green when the fund is rich to its bitcoin, red when cheap.
+   Actionability is a separate axis: when a round trip actually clears its
+   costs the same hue simply burns brighter. Direction and opportunity are
+   two different facts and deserve two different channels. */
+body[data-state="flat"]{ --accent:#7E8AA0 }
+body[data-state="pos"] { --accent:var(--pos) }
+body[data-state="neg"] { --accent:var(--neg) }
+body[data-signal="live"]{ --glow:1 }
 
 *{margin:0;padding:0;box-sizing:border-box}
 html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;scroll-behavior:smooth}
@@ -162,6 +167,17 @@ h1,h2,h3{font-weight:600;letter-spacing:-.025em;line-height:1.2}
 .tape-item{display:flex;align-items:center;gap:7px;white-space:nowrap}
 .tape-item b{font-weight:600;color:var(--ink-2);font-size:10.5px;letter-spacing:.08em;text-transform:uppercase}
 .tape-item span{color:var(--ink);font-weight:600}
+.tape-item span.pos{color:var(--pos)}
+.tape-item span.neg{color:var(--neg)}
+
+/* an actionable gap makes the verdict panel visibly hotter */
+body[data-signal="live"] .verdict{
+  border-color:color-mix(in oklab,var(--accent) 52%,transparent);
+  box-shadow:0 0 0 1px color-mix(in oklab,var(--accent) 16%,transparent),
+             0 18px 50px color-mix(in oklab,var(--accent) 18%,transparent);
+}
+body[data-signal="live"] .verdict-state{animation:breathe 2.6s var(--e-io) infinite}
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.55}}
 
 .topbar-right{display:flex;align-items:center;gap:8px;flex:none}
 .chip{
@@ -206,13 +222,36 @@ main{width:min(100%,var(--shell));margin:0 auto;padding:22px 26px 90px;display:f
 .hero-grid{display:grid;grid-template-columns:1fr 300px;gap:34px;align-items:start}
 
 .bignum{
+  position:relative;
   display:flex;align-items:baseline;gap:.12em;margin-top:12px;
   font-size:clamp(62px,10.5vw,124px);font-weight:700;letter-spacing:-.055em;line-height:.86;
   color:var(--accent);
   transition:color .55s var(--e-io);
-  text-shadow:0 0 60px color-mix(in oklab,var(--accent) 28%,transparent);
 }
-.bignum .u{font-size:.20em;font-weight:600;letter-spacing:-.01em;color:var(--ink-3);text-shadow:none;transform:translateY(-.35em)}
+/* Gradient is scoped to the figure itself, never the whole flex row:
+   background-clip:text on a parent masks EVERY descendant glyph at its
+   untransformed position, so the translated unit rendered twice. */
+#basis-value{
+  background-image:linear-gradient(174deg,
+    color-mix(in oklab, white 30%, var(--accent)) 0%,
+    var(--accent) 44%,
+    color-mix(in oklab, black 26%, var(--accent)) 100%);
+  -webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;
+  transition:background-image .55s var(--e-io);
+}
+/* bloom sits behind the glyphs rather than as a text-shadow, which
+   gradient-filled type cannot carry without smearing into a blob */
+.bignum::after{
+  content:"";position:absolute;left:-6%;right:28%;top:4%;bottom:4%;z-index:-1;
+  background:radial-gradient(closest-side, color-mix(in oklab,var(--accent) 30%,transparent), transparent 74%);
+  filter:blur(32px);pointer-events:none;
+  transition:background .6s var(--e-io);
+}
+.bignum .u{
+  font-size:.20em;font-weight:600;letter-spacing:-.01em;
+  color:var(--ink-3);align-self:flex-start;margin-top:.42em;
+}
 .hero-delta{
   display:inline-flex;align-items:center;gap:8px;margin-top:16px;height:26px;padding:0 11px;
   border-radius:var(--r-pill);background:var(--card-2);border:1px solid var(--line);
